@@ -1,0 +1,16 @@
+Overview:
+---------
+
+wifi-hal-raspberrypi is a generic absratction layer for  Wifi client hadware abstraction layer.
+
+
+Build Instructions:
+-------------------
+* Building the wifi-hal-raspberrypi module
+  It follows the yocto build system
+  bitbake wifi-hal-raspberrypi
+
+ Here, librdkwifihal library instaled under "/usr/lib/"
+ And the header files installed under "/usr/include/" on target
+
+
