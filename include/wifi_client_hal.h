@@ -56,6 +56,17 @@
 #ifndef __WIFI_CLINET_HAL_H__
 #define __WIFI_CLINET_HAL_H__
 
+/**
+ * @defgroup WIFI_HAL Wi-Fi HAL Public APIs and Data Types
+ * @ingroup WIFI
+ *
+ * @defgroup WIFI_HAL_CLIENT_API Wi-Fi Client HAL API List
+ * Wi-Fi Client HAL provides an interface (data structures and API) to interact with underlying Wi-Fi driver and
+ * enabling the client to be connected with an Access Point.
+ * @ingroup WIFI_HAL
+ *
+ */
+
 #include <wifi_common_hal.h>
 //----------------------------------------------------------------------------------------------------
 //Device.WiFi.EndPoint //EndPoint list is mananged by RDKB wifi agent
@@ -94,12 +105,23 @@
 
 //-----------------------------------------------------------------------------------------------------
 //AP connection APIs
+
+/**
+ * @addtogroup WIFI_HAL_TYPES
+ * @{
+ */
+
+/**
+ * @brief SSID information
+ *
+ * Structure which saves the paired SSID information.
+ */
 typedef struct _wifi_pairedSSIDInfo
 {
-  CHAR  ap_ssid[64];	//The current service set identifier in use by the neighboring WiFi SSID. The value MAY be empty for hidden SSIDs.
-  CHAR  ap_bssid[64];	//[MACAddress] The BSSID used for the neighboring WiFi SSID.
-  CHAR  ap_security[64];	//security of AP
-  CHAR  ap_passphrase[128]; //passphrase of AP
+  CHAR  ap_ssid[64];	//!< The current service set identifier in use by the neighboring WiFi SSID. The value MAY be empty for hidden SSIDs.
+  CHAR  ap_bssid[64];	//!< [MACAddress] The BSSID (Basic Service Set ID) used for the neighboring WiFi SSID.
+  CHAR  ap_security[64];	//!< Security of AP
+  CHAR  ap_passphrase[128]; //!< Passphrase of AP
 }wifi_pairedSSIDInfo_t;
 
 /**@} */
@@ -130,55 +152,235 @@ typedef struct _wifi_roamingCtrl_t
 /** @} */
 
 
-
 //1. WPS method
-//Get WPS enable status
+
+/**
+ * @addtogroup WIFI_HAL_CLIENT_API
+ * @{
+ */
+
+/**
+ * @brief This API checks WPS(Wi-Fi Protected Setup) functionality is enabled for this access point.
+ *
+ * @param[in]  ssidIndex The index of the SSID array.
+ * @param[out] output_bool Boolean value which indicates the wps enabled status.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_getCliWpsEnable(INT ssidIndex, BOOL *output_bool);	//RDKB
-//Set WPS enable
+
+/**
+ * @brief This API enables or disables WPS functionality for this access point.
+ *
+ * @param[in] ssidIndex The index of the SSID array.
+ * @param[in] enableValue  Boolean value to enable or disable WPS.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_setCliWpsEnable(INT ssidIndex, BOOL enableValue);	//RDKB
-//Read WPS Device pin (it is also printed on the device label)
+
+/**
+ * @brief This API is used to read the device PIN required for making a WPS connection.
+ *
+ * @param[in] ssidIndex The index of the SSID array.
+ * @param[out] output_ulong  Output parameter which saves the Device PIN.
+ * This value is to be printed on the device.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_getCliWpsDevicePIN(INT ssidIndex, ULONG *output_ulong);	//RDKB
-//Set WPS Device pin
+
+/**
+ * @brief This API sets the WPS Device pin to the Wi-Fi hal.
+ *
+ * @param[in] ssidIndex The index of the SSID array.
+ * @param[in] pin The PIN code to set.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_setCliWpsDevicePIN(INT ssidIndex, ULONG pin);	//RDKB
 
-//Get supported WPS method list. eg "USBFlashDriver,PushButton,PIN"
+/**
+ * @brief This API is used to get WPS configuration  methods supported by the device.
+ *
+ * This function provides the comma-separated list of strings, each list item is an enumeration of:
+ * - USBFlashDrive - User uses a USB flash drive to transfer data between the new client device and
+ * the network's access point.
+ * - Ethernet - If there is no WPS button, user can configure the wireless settings using ethernet on a wifi-extender
+ * - ExternalNFCToken - NFC Tag contains a password token to authenticate Wi-Fi connection.
+ * Uses external program to write  * NDEF encapsulation data to the NFC tag using an external program.
+ * - IntegratedNFCToken - The NFC Tag is integrated in the device.
+ * - NFCInterface - User has to bring the client close to AP allowing a near field communication between the devices.
+ * - PushButton - User has to push a button, either an actual or virtual one,
+ * on both the access point and the new wireless * client device.
+ * - PIN - User has to be read the PIN from either a sticker or display on the new wireless device.
+ *
+ * Device must support PushButton and PIN methods.
+ *
+ * @param[in]  ssidIndex The index of SSID array.
+ * @param[out] methods  The WPS supported methods.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_getCliWpsConfigMethodsSupported(INT ssidIndex, CHAR *methods);		//OEM
-//Get the configed enabled WPS method. eg: "PushButton"
+
+/**
+ * @brief This function indicates WPS configuration methods enabled on the device.
+ *
+ * The API provides the comma-separated list of strings.
+ * Each list item MUST be a member of the list reported by the ConfigMethodsSupported parameter.
+ *
+ * @param[in]  ssidIndex The index of SSID array.
+ * @param[out] output_string  The current WPS method.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_getCliWpsConfigMethodsEnabled(INT ssidIndex, CHAR *output_string);	//RDKB
-//Set active WPS method.
+
+/**
+ * @brief This API sets the active WPS method.
+ *
+ * @param[in] ssidIndex The index of SSID array.
+ * @param[in] methodString The method to enable.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_setCliWpsConfigMethodsEnabled(INT ssidIndex, CHAR *methodString);	//RDKB
-//Get the WPS config status. eg: "Not configured", "configured"
+
+/**
+ * @brief This API is used to get the WPS config status, whether "configured" or "not configured"
+ *
+ * @param[in] ssidIndex The index of SSID array
+ * @param[in] output_string  The output paramter which holds the wps config status.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_getCliWpsConfigurationState(INT ssidIndex, CHAR *output_string);	//RDKB	//OEM
-//User get the EnrolleePin (device pin from AP device) give to hostapd for paring
+
+/**
+ * @brief This API sets the PIN to connect.
+ * User get the EnrolleePin (device pin from AP device) give to hostapd for pairing.
+ *
+ * @param[in] ssidIndex The index of SSID array.
+ * @param[in] EnrolleePin PIN code to connect to the access point.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_setCliWpsEnrolleePin(INT ssidIndex, CHAR *EnrolleePin);	//RDKB
-//Start the Push button pairing
+
+/**
+ * @brief Start the Push button pairing.
+ *
+ * @param[in] ssidIndex The index of SSID array.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_setCliWpsButtonPush(INT ssidIndex);	//RDKB
-//Stop the WPS process
+
+/**
+ * @brief Stop the WPS process.
+ *
+ * @param[in] ssidIndex The index of SSID array.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_cancelCliWPS(INT ssidIndex);	//RDKB
 
+
 //2. Directly pairing method
-//Connect to specified AP
+/**
+ * @brief This API starts the connection process from client with an AP.
+ *
+ * It uses the input parameters to connect using a supported security method and encryption standard.
+ * The security methods can make use of passphrase, public/private key pairs etc.
+ *
+ * @param[in] ssidIndex The index of SSID array.
+ * @param[in] AP_SSID  The ssid to connect.
+ * @param[in] AP_security_mode   The security mode to use.
+ * @param[in] AP_security_WEPKey The wep key.
+ * @param[in] AP_security_PreSharedKey The pre shared key.
+ * @param[in] AP_security_KeyPassphrase The key passphrase.
+ * @param[in] saveSSID Option to save profile in wpa supplicant.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_security_mode, CHAR *AP_security_WEPKey, CHAR *AP_security_PreSharedKey, CHAR *AP_security_KeyPassphrase,int saveSSID,CHAR * eapIdentity,CHAR * carootcert,CHAR * clientcert,CHAR * privatekey);	//Tr181
 
-//Disconnect to specified AP
+/**
+ * @brief This API disconnects the access point specified.
+ *
+ * @param[in] ssidIndex The index of SSID array.
+ * @param[in] AP_SSID  The ssid to disconnect.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_disconnectEndpoint(INT ssidIndex, CHAR *AP_SSID);
 
 // Clear SSID information
 INT wifi_clearSSIDInfo(INT ssidIndex);
 
-//This call back will be invoked when client lost the connection to AP.
+/**
+ * @brief This call back should be registered by Wi-Fi manager to receive status updates from HAL in case of a
+ * connection/disconnection event.
+ *
+ * @param[in]  ssidIndex The index of SSID array.
+ * @param[in]  AP_SSID  The ssid to disconnect.
+ * @param[out] error Indicates the Wi-Fi connection sttaus.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 typedef INT (*wifi_disconnectEndpoint_callback)(INT ssidIndex, CHAR *AP_SSID, wifiStatusCode_t *error);
-//Callback registration function.
+
+/**
+ * @brief Callback registration function.
+ *
+ * @param[in] callback_proc the callback function to disconnect the client.
+ */
 void wifi_disconnectEndpoint_callback_register(wifi_disconnectEndpoint_callback callback_proc);
 
-//This call back will be invoked when client automatically connect to AP.
+/**
+ * @brief This call back will be invoked when client automatically connect to Access Point.
+ *
+ * @param[in]  ssidIndex The index of SSID array.
+ * @param[in]  AP_SSID  The ssid to disconnect.
+ * @param[out] error Indicates the Wi-Fi connection status.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 typedef INT (*wifi_connectEndpoint_callback)(INT ssidIndex, CHAR *AP_SSID, wifiStatusCode_t *error);
-//Callback registration function.
+
+/**
+ * @brief Callback registration function.
+ *
+ * @param[in] callback_proc The callback function to connect the client to the access point.
+ */
 void wifi_connectEndpoint_callback_register(wifi_connectEndpoint_callback callback_proc);
 
-//This call will give the last saved AP's ssid.
-// If previously connected SSSID present, the return as 'RETURN_OK' else 'RETURN_ERR'.
+/**
+ * @brief This call will give the last saved AP's ssid.
+ *
+ * @param[out] pairedSSIDInfo Structure which holds the last connected access point information.
+ *
+ * @return The status of the operation.
+ * @retval RETURN_OK returns O if successful, appropriate error code otherwise.
+ */
 INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo);
+/** @} */
 
 
 /**
