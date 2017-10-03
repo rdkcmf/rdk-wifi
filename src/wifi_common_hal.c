@@ -211,6 +211,13 @@ INT wifi_uninit() {
     return RETURN_OK;
 }
 
+//Get the wifi hal version in string, eg "2.0.0".  WIFI_HAL_MAJOR_VERSION.WIFI_HAL_MINOR_VERSION.WIFI_HAL_MAINTENANCE_VERSION
+INT wifi_getHalVersion(CHAR *output_string)
+{
+    snprintf(output_string, 64, "%d.%d.%d", WIFI_HAL_MAJOR_VERSION, WIFI_HAL_MINOR_VERSION, WIFI_HAL_MAINTENANCE_VERSION);
+    return RETURN_OK;
+}
+
 //clears internal variables to implement a factory reset of the Wi-Fi subsystem
 INT wifi_factoryReset() {
     wifi_uninit();
