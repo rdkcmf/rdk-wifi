@@ -385,7 +385,7 @@ INT wifi_down() {
 
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Bring the wlan interface down\n");
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Hardcoding the interface to wlan0 for now\n");
-    system("ifdown wlan0");
+    system("ifconfig wlan0 down");
     return RETURN_OK;
 }
 
@@ -1041,14 +1041,79 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool) {
 }
 
 INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
-    if ( g_wpa_monitor != NULL ){
-        strcpy(output_string, "UP");
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"The radio is enabled\n");
-        return RETURN_OK;
+    int ret = RETURN_ERR;
+    FILE *fp = NULL;
+    char resultBuff[BUF_SIZE];
+    char cmd[50];
+    char radio_status[20];
+    char cli_buff[512];
+    char *ptr = NULL;
+
+    if(!output_string){
+       RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Output_string is null\n");
+       return ret;
     }
-    
-    strcpy(output_string, "DOWN");
-    return RETURN_ERR;
+
+    pthread_mutex_lock(&wpa_sup_lock);
+    int status = wpaCtrlSendCmd("STATUS");
+    strncpy(cli_buff,return_buf,512);
+    pthread_mutex_unlock(&wpa_sup_lock);
+    memset(radio_status,0,sizeof(radio_status));
+    if (status == 0)
+    {
+        ptr = getValue(cli_buff, "wpa_state");
+        if(NULL != ptr)
+        {
+            strcpy(radio_status,ptr);
+            if(strcmp(radio_status,"INTERFACE_DISABLED") == 0)
+            {
+                strcpy(output_string,"DOWN");
+            }
+            else
+            {
+                strcpy(output_string,"UP");
+            }
+            ret = RETURN_OK;
+            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"\n WPA State : %s, Radio State :%s ",radio_status,output_string);
+        }
+        else
+        {
+            ret = RETURN_ERR;
+            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Radio State is not available in wpa_cli STATUS \n");
+        }
+    }
+    else      // alternate method for getting wlan0 status
+    {
+       memset(cmd,0,sizeof(cmd));
+       memset(resultBuff,0,sizeof(resultBuff));
+       snprintf(cmd,sizeof(cmd),"cat /sys/class/net/wlan0/operstate");
+       fp = popen(cmd,"r");
+       if (fp != NULL)
+       {
+          if(fgets(resultBuff,BUF_SIZE-1,fp) != NULL)
+          {
+             sscanf(resultBuff,"%s",radio_status);
+             if ( strcmp(radio_status,"up") == 0)
+                strcpy(output_string, "UP");
+             else if (strcmp(radio_status,"down") == 0)
+                strcpy(output_string, "DOWN");
+             RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"The radio is %s \n",output_string);
+             ret = RETURN_OK;
+          }
+          else
+          {
+             RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in executing `cat /sys/class/net/wlan0/operstate`  parsing \n");
+             ret = RETURN_ERR;
+          }
+       }
+       else
+       {
+          RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in popen() of sys/class/net/wlan0/operstate : %s \n",__FUNCTION__);
+          ret=RETURN_ERR;
+       }
+       pclose(fp);
+    }
+    return ret;
 }
 
 INT wifi_getRegulatoryDomain(INT radioIndex, CHAR* output_string){
