@@ -416,11 +416,17 @@ INT parse_scan_results(char *buf, size_t len)
         ap_list[count].ap_BSSID[delim_ptr-ptr] = '\0';
 /*        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"bssid=%s \n",ap_list[count].ap_BSSID); */
 
-        /* Parse frequency */
+        /* Parse frequency band  */
         ptr = delim_ptr + 1;
         delim_ptr=strchr(ptr, '\t');
-        memcpy(ap_list[count].ap_OperatingFrequencyBand, ptr, (delim_ptr-ptr));
-        ap_list[count].ap_OperatingFrequencyBand[delim_ptr-ptr] = '\0';
+        if(ptr) {
+           char freq[10];
+           strncpy(freq,ptr,10);
+           int frequency=strtol(freq,NULL,10);
+           ((frequency/1000) == 2)?strcpy(ap_list[count].ap_OperatingFrequencyBand,"2.4GHz"):strcpy(ap_list[count].ap_OperatingFrequencyBand,"5GHz");
+        }
+        //memcpy(ap_list[count].ap_OperatingFrequencyBand, ptr, (delim_ptr-ptr));
+        //ap_list[count].ap_OperatingFrequencyBand[delim_ptr-ptr] = '\0';
 /*        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"freq=%s \n",ap_list[count].ap_OperatingFrequencyBand); */
 
         /* parse signal level */

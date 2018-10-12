@@ -111,11 +111,20 @@ typedef struct _wifi_pairedSSIDInfo
  */
 typedef struct _wifi_roamingCtrl_t
 {
-
   BOOL roamingEnable;
-  int preassnBestThreshold;
-  int preassnBestDelta;
-
+  BOOL selfSteerOverride;
+  BOOL roam80211kvrEnable;
+  INT preassnBestThreshold;
+  INT preassnBestDelta;
+  INT postAssnLevelDeltaConnected;
+  INT postAssnLevelDeltaDisconnected;
+  INT postAssnSelfSteerThreshold;
+  INT postAssnSelfSteerTimeframe;
+  INT postAssnBackOffTime;
+  //INT postAssnSelfSteerBeaconsMissedTime;
+  INT postAssnAPctrlThreshold;
+  INT postAssnAPctrlTimeframe;
+  
 }wifi_roamingCtrl_t;
 
 /** @} */
