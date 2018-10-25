@@ -1,0 +1,16 @@
+Overview:
+---------
+
+wifi-hal-interface files a generic absratction layer over hadware abstraction layer.
+
+
+Build Instructions:
+-------------------
+* Building the wifi-hal-interface module
+  It follows the yocto build system
+  bitbake wifi-hal-interface
+
+ Here, librdkwifihal library instaled under "/usr/lib/"
+ And the header files installed under "/usr/include/" on target
+
+
