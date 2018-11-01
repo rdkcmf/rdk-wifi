@@ -1117,14 +1117,23 @@ INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
 }
 
 INT wifi_getRegulatoryDomain(INT radioIndex, CHAR* output_string){
-     
+    int ret = RETURN_ERR;
     if(!output_string){
        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Output_string is null\n");
-       return RETURN_ERR;
+       return ret;
     }
-    strcpy(output_string, "US");
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Regulatory domain:US\n");
-    return RETURN_OK; 
+    pthread_mutex_lock(&wpa_sup_lock);
+    int status = wpaCtrlSendCmd("GET COUNTRY");
+
+    if(status == 0 && return_buf[0] != '\0'){
+       snprintf(output_string, 4, "%s", return_buf);
+       ret = RETURN_OK;
+    }
+    else{
+        ret = RETURN_ERR;
+    }
+    pthread_mutex_unlock(&wpa_sup_lock);
+    return ret;
 }
 
 INT wifi_getRadioMaxBitRate(INT radioIndex, CHAR *output_string) {
