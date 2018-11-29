@@ -479,30 +479,27 @@ INT wifi_getNeighboringWiFiDiagnosticResult(INT radioIndex, wifi_neighbor_ap_t *
     int retry = 0;
     
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Starting a single scan..\n");
-
     pthread_mutex_lock(&wpa_sup_lock);
-    if (cur_scan_state != WIFI_HAL_WPA_SUP_SCAN_STATE_IDLE) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scan is in progress \n");
-        goto exit_err;
-        
-    }
-    bNoAutoScan=TRUE; 
-    wpaCtrlSendCmd("SCAN");
-    if (strstr(return_buf, "FAIL-BUSY") != NULL) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Scan command returned %s .. waiting \n", return_buf);            
-//        pthread_mutex_unlock(&wpa_sup_lock);
+    if (cur_scan_state == WIFI_HAL_WPA_SUP_SCAN_STATE_STARTED) {
+        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scan is already in progress, Waiting for the scan results. \n");
+    } else {
+        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: No in progress scanning, Starting a fresh scan.\n");
+        bNoAutoScan=TRUE;
         wpaCtrlSendCmd("BSS_FLUSH 0");
-        sleep(1); 
-//        pthread_mutex_lock(&wpa_sup_lock);
         wpaCtrlSendCmd("SCAN");
         if (strstr(return_buf, "FAIL-BUSY") != NULL) {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Scan command returned %s FAILED \n", return_buf);
-            goto exit_err;
+            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Scan command returned %s .. waiting \n", return_buf);            
+            wpaCtrlSendCmd("BSS_FLUSH 0");
+            sleep(1); 
+            wpaCtrlSendCmd("SCAN");
+            if (strstr(return_buf, "FAIL-BUSY") != NULL) {
+                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Scan command returned %s FAILED \n", return_buf);
+                goto exit_err;
+            }
         }
+        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scan command returned %s \n", return_buf);
+        cur_scan_state = WIFI_HAL_WPA_SUP_SCAN_STATE_STARTED;
     }
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scan command returned %s \n", return_buf);
-
-    cur_scan_state = WIFI_HAL_WPA_SUP_SCAN_STATE_STARTED;
     pthread_mutex_unlock(&wpa_sup_lock);
     while ((cur_scan_state !=  WIFI_HAL_WPA_SUP_SCAN_STATE_RESULTS_RECEIVED) &&(retry++ < 1000)) {
         usleep(WPA_SUP_TIMEOUT);
