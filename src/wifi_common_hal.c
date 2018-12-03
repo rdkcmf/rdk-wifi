@@ -713,7 +713,7 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) {
     if (!output_string) {
         return RETURN_ERR;
     }
-    snprintf(output_string, 64, (radioIndex==0)?"b,g,n":"n,ac");
+    snprintf(output_string, 64, (radioIndex==0)?"b,g,n":"a,n,ac");
     return RETURN_OK;
 }
 
@@ -732,16 +732,19 @@ INT wifi_getRadioStandard(INT radioIndex, CHAR *output_string, BOOL *gOnly, BOOL
             0 != frequency)
     {
         freqBand = frequency/1000;
-        if(freqBand == 2) {
+        if(freqBand == 2 && radioIndex == 0) {
             snprintf(output_string, 64,"b,g,n");
             ret = RETURN_OK;
-        } else if(freqBand == 5) {
+        } else if(freqBand == 5 && radioIndex == 1) {
              snprintf(output_string, 64,"a,n,ac");
              ret = RETURN_OK;
         } else {
             RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Invalid frequency band, Failure in getting Operating standard.\n");
         }
     }
+    if(gOnly != NULL) *gOnly = false;
+    if(nOnly != NULL) *nOnly = false;
+    if(acOnly != NULL) *acOnly = false;
     return ret;
 }
 
