@@ -1225,6 +1225,40 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
         }
     }
     fclose(f);
+
+    RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: ap_ssid=[%s], ap_bssid=[%s]\n",
+            __FUNCTION__, pairedSSIDInfo->ap_ssid, pairedSSIDInfo->ap_bssid);
+
+    // BSSID will be empty if wpa_supplicant.conf does not have it
+    // in this case, get BSSID from output of wpa control interface command "STATUS"
+    // but use BSSID from "STATUS" only if SSID from "STATUS" = SSID from conf file (as any SSID not in conf file should be ignored)
+    if (pairedSSIDInfo->ap_ssid[0] != '\0' && pairedSSIDInfo->ap_bssid[0] == '\0') // wpa_supplicant.conf file has SSID but not BSSID
+    {
+        pthread_mutex_lock(&wpa_sup_lock);
+        wpaCtrlSendCmd("STATUS");
+        const char* current_bssid = getValue(return_buf, "bssid");
+        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: current_bssid=[%s]\n", __FUNCTION__, current_bssid);
+        if (current_bssid)
+        {
+            const char *ssid_ptr = getValue((char*) (strchr(current_bssid, '\0') + 1), "ssid"); // look for ssid after end of bssid
+            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: ssid_ptr=[%s]\n", __FUNCTION__, ssid_ptr);
+            if (ssid_ptr)
+            {
+                char current_ssid[MAX_SSID_LEN+1] = {0};
+                printf_decode (current_ssid, sizeof(current_ssid), ssid_ptr);
+                RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: current_ssid=[%s]\n", __FUNCTION__, current_ssid);
+                if (strcmp(pairedSSIDInfo->ap_ssid, current_ssid) == 0)
+                {
+                    snprintf (pairedSSIDInfo->ap_bssid, sizeof(pairedSSIDInfo->ap_bssid), "%s", current_bssid);
+                    snprintf (bssid, sizeof(bssid), "%s", current_bssid);
+                    RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: current_ssid matches ap_ssid. ap_bssid set to [%s]\n",
+                            __FUNCTION__, pairedSSIDInfo->ap_bssid);
+                }
+            }
+        }
+        pthread_mutex_unlock(&wpa_sup_lock);
+    }
+
     return RETURN_OK;
 }
 
