@@ -163,6 +163,9 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
 //Disconnect to specified AP
 INT wifi_disconnectEndpoint(INT ssidIndex, CHAR *AP_SSID);
 
+// Clear SSID information
+INT wifi_clearSSIDInfo(INT ssidIndex);
+
 //This call back will be invoked when client lost the connection to AP.
 typedef INT (*wifi_disconnectEndpoint_callback)(INT ssidIndex, CHAR *AP_SSID, wifiStatusCode_t *error);
 //Callback registration function.

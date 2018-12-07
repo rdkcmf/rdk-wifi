@@ -1492,6 +1492,26 @@ void wifi_disconnectEndpoint_callback_register(wifi_disconnectEndpoint_callback 
    callback_disconnect=callback_proc;
 }
 
+// Clear SSID info from HAL
+INT wifi_clearSSIDInfo(INT ssidIndex) {
+
+    int status = RETURN_ERR;
+
+    pthread_mutex_lock(&wpa_sup_lock);
+    if (wpaCtrlSendCmd("REMOVE_NETWORK 0") == RETURN_OK) {
+         if(wpaCtrlSendCmd("SAVE_CONFIG") == RETURN_OK) {
+             RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Cleared ssid info successfully. \n");
+             status = RETURN_OK;
+         } else {
+             RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Error in saving configuration. \n ");
+         }
+    } else {
+        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Error in removing network. \n");
+    } 
+    pthread_mutex_unlock(&wpa_sup_lock);
+    return status;
+}
+
 
 #ifdef WIFI_CLIENT_ROAMING
 
