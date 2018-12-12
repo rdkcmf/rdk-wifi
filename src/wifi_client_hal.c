@@ -547,7 +547,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
 {
     char *ptr;
     char *bssid, *ssid;
-    int phyrate, noise, rssi;
+    int phyrate, noise, rssi,freq;
     int retStatus = -1;
 
     if(NULL == stats)
@@ -624,6 +624,24 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
             noise = atoi(ptr);
             stats->sta_Noise = noise; 
             RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"noise=%d \n", noise);
+        }
+
+        ptr = ptr + strlen(ptr) + 1;
+        ptr = getValue(ptr, "FREQUENCY");
+        if(ptr == NULL)
+        {
+            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: FREQUENCY not in signal poll \n");
+            goto exit;
+        } else  {
+            freq = atoi(ptr);
+            RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"WIFI_HAL: FREQUENCY = %d. \n",freq);
+            if((freq / 1000) == 2)
+                strcpy(stats->sta_BAND,"2.4GHz");
+            else if((freq / 1000) == 5)
+                strcpy(stats->sta_BAND,"5GHz");
+            else
+                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unknown freq band.\n");
+            RDK_LOG( RDK_LOG_INFO,LOG_NMGR,"WIFI_HAL: Frequency Band in use = %s \n",stats->sta_BAND);
         }
     }
     else
