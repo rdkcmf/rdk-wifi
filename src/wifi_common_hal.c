@@ -137,7 +137,7 @@ extern size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
 #define WPA_SUP_PIDFILE         "/var/run/wpa_supplicant/wlan0.pid"
 #define WPA_SUP_CTRL            "/var/run/wpa_supplicant/wlan0"
 
-#define WPA_SUP_TIMEOUT         4000   /* 4 msec */
+#define WPA_SUP_TIMEOUT         7000   /* 7 msec */
 #define WPA_SUP_PING_INTERVAL   60 /* 1 min */
 
 typedef enum {
