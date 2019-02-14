@@ -2466,5 +2466,11 @@ int parse_neighbor_report_response(char *nbr_response,wifi_rrm_neighbor_report_t
    }
    return RETURN_OK;
 }
+
+WiFiHalStatus_t getwifiStatusCode()
+{
+    return WIFISTATUS_HAL_COMPLETED;
+}
+
 #endif
 

@@ -203,6 +203,14 @@ int wifi_setRoamingControl (int ssidIndex, wifi_roamingCtrl_t *pRoamingCtrl_data
  * @retval 0 if SUCCESSFULLY gets the Roaming control data
  */
 int wifi_getRoamingControl(int ssidIndex, wifi_roamingCtrl_t *pRoamingCtrl_data);
+
+/**
+ * @brief this call gets the current wifi status
+ *
+ * @returns wifi_status_code
+ */
+WiFiHalStatus_t getwifiStatusCode();
+
 /** @} */
 #else
 #error "! __WIFI_CLINET_HAL_H__"
