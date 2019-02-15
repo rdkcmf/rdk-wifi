@@ -276,6 +276,13 @@ typedef enum _WiFiHalStatus_t {
     WIFISTATUS_HAL_GROUP_HANDSHAKE,
     WIFISTATUS_HAL_COMPLETED
 } WiFiHalStatus_t;
+/* WiFi Bands  */
+typedef enum {
+    WIFI_HAL_FREQ_BAN_NONE,
+    WIFI_HAL_FREQ_BAND_24GHZ,
+    WIFI_HAL_FREQ_BAND_5GHZ,
+} WIFI_HAL_FREQ_BAND;
+
 
 /**
  * @brief Enumerators for Wi-Fi connection status.
@@ -1570,6 +1577,8 @@ INT wifi_getSSIDTrafficStats(INT ssidIndex, wifi_ssidTrafficStats_t *output_stru
 INT wifi_applySSIDSettings(INT ssidIndex);
 
 
+
+
 //-----------------------------------------------------------------------------------------------
 //Device.WiFi.NeighboringWiFiDiagnostic.
 //Device.WiFi.NeighboringWiFiDiagnostic.DiagnosticsState
@@ -1613,6 +1622,7 @@ INT wifi_applySSIDSettings(INT ssidIndex);
  * @note HAL function should allocate an data structure array, and return to caller with "neighbor_ap_array".
  */
 INT wifi_getNeighboringWiFiDiagnosticResult(INT radioIndex, wifi_neighbor_ap_t **neighbor_ap_array, UINT *output_array_size); //Tr181
+INT wifi_getSpecificSSIDInfo(const char* SSID, WIFI_HAL_FREQ_BAND band, wifi_neighbor_ap_t **filtered_ap_array, UINT *output_array_size);
 
 /** @} */
 #endif

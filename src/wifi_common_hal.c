@@ -16,7 +16,6 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */ 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -149,6 +148,8 @@ typedef enum {
 
 char* getValue(char *buf, char *keyword);
 int wpaCtrlSendCmd(char *cmd);
+int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbor_ap_t neighborAPList[],int timeout);
+static INT getFrequencyListFor_Band(WIFI_HAL_FREQ_BAND band, char *output_string);
 BOOL isDualBandSupported();
 #ifdef WIFI_CLIENT_ROAMING
 int initialize_roaming_config();
@@ -161,7 +162,7 @@ struct wpa_ctrl *g_wpa_ctrl= NULL;
 struct wpa_ctrl *g_wpa_monitor = NULL; 
 WIFI_HAL_WPA_SUP_SCAN_STATE cur_scan_state = WIFI_HAL_WPA_SUP_SCAN_STATE_IDLE;
 pthread_mutex_t wpa_sup_lock;
-char cmd_buf[1024], return_buf[8192];
+char cmd_buf[1024], return_buf[16384];
 char event_buf[4096];
 wifi_neighbor_ap_t ap_list[512];
 
@@ -188,6 +189,73 @@ INT wifi_getHalVersion(CHAR *output_string)
     } 
     return retStatus;
 }
+static INT getFrequencyListFor_Band(WIFI_HAL_FREQ_BAND band, char *output_string)
+{
+    if(output_string == NULL)
+    {
+        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"[%s] Memory not allocated for output_string \n",__FUNCTION__);
+        return RETURN_ERR;
+    }
+    char *s,*t,*r;
+    char lines[32][64];
+    int i,k;
+    INT ret = RETURN_ERR;
+    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: in getFrequencyListFor_Band ..\n");
+    pthread_mutex_lock(&wpa_sup_lock);
+    int ret_status = wpaCtrlSendCmd("GET_CAPABILITY freq");
+    if(ret_status == RETURN_OK)
+    {
+        if( band == WIFI_HAL_FREQ_BAND_5GHZ)
+        {
+            s = strstr(return_buf, "Mode[A] Channels:");
+            t = strstr(return_buf, "Mode[B] Channels:");
+            if(t) *t = NULL;
+        }
+        else if (band == WIFI_HAL_FREQ_BAND_24GHZ)
+        {
+            s = strstr(return_buf, "Mode[G] Channels:");
+            t = strstr(return_buf, "Mode[A] Channels:");
+            if(t) *t = NULL;
+        }
+        if (s == NULL)
+        {
+            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"[%s] Error in selecting the frequencies\n",__FUNCTION__);
+            ret = RETURN_ERR;
+        }
+        else
+        {
+            s = s+18;
+            r = strtok(s,"\n");
+            i=0;
+            while(r != NULL)
+            {
+                strcpy(lines[i],r);
+                r = strtok(NULL,"\n");
+                i++;
+            }
+            for(int k=0;k<i;k++)
+            {
+                char *ptr = lines[k];
+                strtok_r(ptr,"=", &ptr);
+                char *tmp = strtok(ptr," ");
+                strcpy(lines[k],tmp);
+                strcat(output_string,lines[k]);
+                strcat(output_string, " ");
+            }
+            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"frequencies selected : [%s] \n",output_string);
+            ret = RETURN_OK;
+        }
+    }
+    else
+    {
+        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"[%s] Error in getting supported bands- Unable to get Channel Capability\n",__FUNCTION__);
+        ret = RETURN_ERR;
+    }
+    pthread_mutex_unlock(&wpa_sup_lock);
+    return ret;
+    //wpa_cli get_capability freq
+}
+
 char* readFile(char *filename)
 {
     FILE    *fp = NULL;
@@ -480,7 +548,7 @@ INT parse_scan_results(char *buf, size_t len)
 }
 
 INT wifi_getNeighboringWiFiDiagnosticResult(INT radioIndex, wifi_neighbor_ap_t **neighbor_ap_array, UINT *output_array_size) 
-{    
+{
     size_t return_len=sizeof(return_buf)-1;
     int retry = 0;
     
@@ -542,6 +610,63 @@ INT wifi_getNeighboringWiFiDiagnosticResult(INT radioIndex, wifi_neighbor_ap_t *
    bNoAutoScan=FALSE;
    pthread_mutex_unlock(&wpa_sup_lock);
    return RETURN_ERR; 
+}
+
+INT wifi_getSpecificSSIDInfo(const char* SSID, WIFI_HAL_FREQ_BAND band, wifi_neighbor_ap_t **filtered_ap_array, UINT *output_array_size)   // ssid, band , output_array
+{
+    char freq_list_string[BUF_SIZE];
+    char cmd[BUF_SIZE];
+    wifi_neighbor_ap_t filtered_APList[32];
+    int bssCount = 0;
+    int ret = RETURN_ERR;
+    memset(&freq_list_string,0,BUF_SIZE);
+    memset(&cmd,0,BUF_SIZE);
+    if(band != WIFI_HAL_FREQ_BAN_NONE)
+    {
+        if( RETURN_OK == getFrequencyListFor_Band(band,freq_list_string) && freq_list_string != NULL)
+        {
+            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Setting scan Freq based on selected Band to - %s \n",freq_list_string);
+            snprintf(cmd,BUF_SIZE,"SET freq_list %s",freq_list_string);
+            pthread_mutex_lock(&wpa_sup_lock);
+            wpaCtrlSendCmd(cmd);   //wpa_cli freq_list + bands returned from the above static function parsed results
+            pthread_mutex_unlock(&wpa_sup_lock);
+        }
+        else
+        {
+            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Error in getting the Frequency list for specified Band, NOT SCANNING . \n");
+            return RETURN_ERR;
+        }
+    }
+
+    int timeout = 8;
+    bssCount = get_wifi_self_steer_matching_bss_list(SSID,filtered_APList,timeout);  //setting time limit as 8 (to make scan complete)
+    *output_array_size = bssCount;
+    if(bssCount == 0)
+    {
+        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: No BSS found with given band and frequency \n");
+        ret = RETURN_ERR;
+    }
+    else
+    {
+        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Found %d  BSS ids' for SSID %s \n",bssCount,SSID);
+        *filtered_ap_array = (wifi_neighbor_ap_t *)malloc(bssCount*sizeof(wifi_neighbor_ap_t));
+        if(*filtered_ap_array == NULL)
+        {
+            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Memory allocation failure\n");
+            ret = RETURN_ERR;
+        }
+        else
+        {
+            int i;
+            for (i=0; i<*output_array_size; i++)
+                (*filtered_ap_array)[i] = filtered_APList[i];
+            ret = RETURN_OK;
+        }
+    }
+    pthread_mutex_lock(&wpa_sup_lock);
+    wpaCtrlSendCmd("SET freq_list 0");   //reset the freq_list wpa_cli freq_list 0
+    pthread_mutex_unlock(&wpa_sup_lock);
+    return ret;
 }
 
 /**************WiFi Diagnostics********************/

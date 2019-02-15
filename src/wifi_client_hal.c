@@ -49,12 +49,13 @@ extern size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
 #define MAX_PASSWORD_LEN    64           /* Maximum password length */
 #define ENET_LEN            17           /* Length of bytes for displaying an Ethernet address, e.g., 00:00:00:00:00:00.*/
 #define CSPEC_LEN           20           /* Channel Spec string length */
-#define RETURN_BUF_LENGTH   8192         /* Return buffer length */
+#define RETURN_BUF_LENGTH   16384         /* Return buffer length */
 #define BUFF_LEN_32         MAX_SSID_LEN /* Buffer Length 32 */
 #define BUFF_LEN_64         64           /* Buffer Length 64*/
 #define MAX_WPS_AP_COUNT    5            /* Max number of PBC enabled Access Points */
 #define WPS_CON_TIMEOUT     120          /* WPS connection timeout */
 
+#define MAX_NEIGHBOR_LIMIT  32            /* Max number of APs in neighbor report */
 #ifdef WIFI_CLIENT_ROAMING
 #define WIFI_ROAMING_CONFIG_FILE "/opt/wifi/wifi_roamingControl.json"  /* Persistent storage for Roaming Configuration */
 #define WIFI_DEFAULT_ROAMING_ENABLE false
@@ -67,7 +68,6 @@ extern size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
 #define WIFI_DEFAULT_BEST_DELTA_DISCONNECTED 8
 #define WIFI_DEFAULT_AP_CONTROL_THRESHOLD -75
 #define WIFI_DEFAULT_AP_CONTROL_TIMEFRAME 60
-#define MAX_NEIGHBOR_LIMIT  16            /* Max number of APs in neighbor report */
 #define WIFI_DEFAULT_POST_ASSN_BACKOFF_TIME    2
 #define WIFI_DEFAULT_POST_ASSN_DELTA    3
 #define WPA_EVENT_BEACON_LOSS "CTRL-EVENT-BEACON-LOSS"
@@ -88,12 +88,6 @@ typedef enum {
     WIFI_HAL_WPA_SUP_SCAN_STATE_STARTED,
     WIFI_HAL_WPA_SUP_SCAN_STATE_RESULTS_RECEIVED,
 } WIFI_HAL_WPA_SUP_SCAN_STATE;
-
-typedef enum {
-    WIFI_HAL_FREQ_BAN_NONE,
-    WIFI_HAL_FREQ_BAND_24GHZ,
-    WIFI_HAL_FREQ_BAND_5GHZ,
-} WIFI_HAL_FREQ_BAND;
 
 #ifdef WIFI_CLIENT_ROAMING
 typedef enum {
@@ -184,12 +178,11 @@ static int isPrivateSSID=1;                  /* Variable to check whether to sav
 size_t event_buf_len;
 pthread_t wps_start_thread;
 
-#ifdef WIFI_CLIENT_ROAMING
 
+#ifdef WIFI_CLIENT_ROAMING
 pthread_mutex_t wifi_roam_lock;
 pthread_cond_t cond;
 wifi_rrm_neighbor_report_t stRrmNeighborRpt;
-WIFI_HAL_ROAM_STATE cur_roaming_state = WIFI_HAL_ROAM_STATE_ROAMING_IDLE;
 pthread_t wifi_signal_mon_thread;
 wifi_roamingCtrl_t pstRoamingCtrl;        /* Global Roaming configuration */
 int backOffRefreshed = 1;
@@ -197,6 +190,7 @@ INT postAssocBackOffTime = WIFI_DEFAULT_POST_ASSN_BACKOFF_TIME;
 WIFI_HAL_RRM_NEIGHBOR_REP_STATUS cur_rrm_nbr_rep_state = WIFI_HAL_RRM_NEIGHBOR_REP_STATE_IDLE;
 //WIFI_HAL_ROAMING_MODE cur_roaming_mode = WIFI_HAL_ROAMING_MODE_SELF_STEERING;
 WIFI_HAL_ROAMING_MODE cur_roaming_mode = WIFI_HAL_ROAMING_MODE_AP_STEERING;
+WIFI_HAL_ROAM_STATE cur_roaming_state = WIFI_HAL_ROAM_STATE_ROAMING_IDLE;
 #endif   // WIFI_CLIENT_ROAMING
 
 
@@ -1983,8 +1977,8 @@ int initialize_roaming_config()
     wifi_setRoamingControl(ssidIndex,&pRoamingCtrl_data); 
     return RETURN_OK;
 }
-
-static int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbor_ap_t neighborAPList[])
+#endif
+int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbor_ap_t neighborAPList[], int timeout)
 {
     char tmpBuff[RETURN_BUF_LENGTH];
     int ap_count = 0;
@@ -1992,11 +1986,8 @@ static int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbo
     int apCnt = 0,matchCount = 0;
 
     // initiate a scan and get the list of matching BSS
-    RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: Starting scan for post association roaming... \n");
+    RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: Starting scan for best Neighbor SSIDs ... \n");
     bNoAutoScan = TRUE;
-    pthread_mutex_lock(&wifi_roam_lock);
-    cur_roaming_state = WIFI_HAL_ROAM_STATE_AP_SELECTION;
-    pthread_mutex_unlock(&wifi_roam_lock);
     pthread_mutex_lock(&wpa_sup_lock);
     wpaCtrlSendCmd("BSS_FLUSH 0");
     wpaCtrlSendCmd("SCAN");
@@ -2005,7 +1996,7 @@ static int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbo
 
     // Lets wait for the scan to complete
     while ((cur_scan_state !=  WIFI_HAL_WPA_SUP_SCAN_STATE_RESULTS_RECEIVED) &&(retry++ < 10)) {       
-        usleep(600000);
+        usleep(timeout*100000);
     }
     // Get scan results
     memset(tmpBuff,0,sizeof(tmpBuff));
@@ -2019,7 +2010,7 @@ static int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbo
     for(apCnt = 0;apCnt<ap_count; apCnt++) {
 
         if ((strncmp (ap_list[apCnt].ap_SSID,ssid_to_find,MAX_SSID_LEN) == 0) && (matchCount<MAX_NEIGHBOR_LIMIT)) {
-            RDK_LOG(RDK_LOG_INFO,LOG_NMGR, "WIFI_HAL: Post Assoc Roam, BSS match - ssid = [%s] bssid = [%s] rssi = [%d] freq = [%s]\n",
+            RDK_LOG(RDK_LOG_INFO,LOG_NMGR, "WIFI_HAL: SCAN Results Matching BSS - ssid = [%s] bssid = [%s] rssi = [%d] freq = [%s]\n",
                     ap_list[apCnt].ap_SSID,ap_list[apCnt].ap_BSSID, ap_list[apCnt].ap_SignalStrength, ap_list[apCnt].ap_OperatingFrequencyBand);
             memcpy(&neighborAPList[matchCount],&ap_list[apCnt],sizeof(wifi_neighbor_ap_t));
             matchCount++;
@@ -2029,7 +2020,7 @@ static int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbo
     }
     return matchCount;
 }
-
+#ifdef WIFI_CLIENT_ROAMING
 static int get_best_ap_from_neighbor_list(wifi_neighbor_ap_t neighborAPList[],int apCount,wifi_neighbor_ap_t* bestNeighbor)
 {
     int count = 0;
@@ -2103,7 +2094,11 @@ static int start_post_assoc_roaming(WIFI_HAL_ROAMING_MODE roamingMode)
         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get current SSID, Skip Roaming. \n");
         return retStatus;
     }
-    bssCount = get_wifi_self_steer_matching_bss_list(currWifiStats.sta_SSID,neighborAPList);
+    int timeout = 6;  //6 seconds timeout
+    pthread_mutex_lock(&wifi_roam_lock);
+    cur_roaming_state = WIFI_HAL_ROAM_STATE_AP_SELECTION;
+    pthread_mutex_unlock(&wifi_roam_lock);
+    bssCount = get_wifi_self_steer_matching_bss_list(currWifiStats.sta_SSID,neighborAPList,timeout);
     if(bssCount == 0) {
         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: No Matching BSS found to Roam. \n");
         incrementBackoff(&postAssocBackOffTime);
