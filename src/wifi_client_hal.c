@@ -555,9 +555,11 @@ void monitor_thread_task(void *param)
                                 snprintf (reason, sizeof (reason), "%s", name_value_entry + strlen ("reason="));
                         }
 
-                        if (0 == strcmp (reason, "WRONG_KEY"))
+                        if (0 == strcmp (reason, "WRONG_KEY")) {
                             connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
-                        else if (0 == strcmp (reason, "AUTH_FAILED"))
+                            RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: Connection failed due to invalid credential, Disconnecting...\n");
+                            wpaCtrlSendCmd("DISCONNECT");
+                        } else if (0 == strcmp (reason, "AUTH_FAILED"))
                             connError = WIFI_HAL_ERROR_AUTH_FAILED;
                     }
 
