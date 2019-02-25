@@ -765,8 +765,6 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
                  RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get BSSID from BSS current\n");
              }
         }
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"bssid=%s\n",stats->sta_BSSID);
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"ssid=%s\n", stats->sta_SSID);
     } else {
         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpaCtrlSendCmd(STATUS) failed - Ret = %d \n",retStatus);
         goto exit;
@@ -785,7 +783,6 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         else {
             rssi = atoi(ptr);
             stats->sta_RSSI = rssi; 
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"rssi=%d \n", rssi);
         }
         ptr = ptr + strlen(ptr) + 1;
         ptr = getValue(ptr, "LINKSPEED");
@@ -797,7 +794,6 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         else {
             phyrate = atoi(ptr);
             stats->sta_PhyRate = phyrate; 
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"phyrate=%d \n", phyrate);
         }    
     
         ptr = ptr + strlen(ptr) + 1;
@@ -810,7 +806,6 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         else {
             noise = atoi(ptr);
             stats->sta_Noise = noise; 
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"noise=%d \n", noise);
         }
 
         ptr = ptr + strlen(ptr) + 1;
@@ -821,20 +816,21 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
             goto exit;
         } else  {
             freq = atoi(ptr);
-            RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"WIFI_HAL: FREQUENCY = %d. \n",freq);
+            RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"FREQUENCY=%d \t",freq);
             if((freq / 1000) == 2)
                 strcpy(stats->sta_BAND,"2.4GHz");
             else if((freq / 1000) == 5)
                 strcpy(stats->sta_BAND,"5GHz");
             else
                 RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unknown freq band.\n");
-            RDK_LOG( RDK_LOG_INFO,LOG_NMGR,"WIFI_HAL: Frequency Band in use = %s \n",stats->sta_BAND);
         }
     }
     else
     {
         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpaCtrlSendCmd(SIGNAL_POLL) failed ret = %d\n",retStatus);
+        goto exit;
     }
+    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"bssid=%s,ssid=%s,rssi=%d,phyrate=%d,noise=%d,Band=%s\n",stats->sta_BSSID,stats->sta_SSID,(int)stats->sta_RSSI,(int)stats->sta_PhyRate,(int)stats->sta_Noise,stats->sta_BAND);
 exit:
     pthread_mutex_unlock(&wpa_sup_lock);
     return;
