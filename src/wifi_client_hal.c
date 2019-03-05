@@ -593,3 +593,13 @@ void wifi_disconnectEndpoint_callback_register(wifi_disconnectEndpoint_callback 
    callback_disconnect=callback_proc;
 }
 
+// Clear SSID info from HAL
+INT wifi_clearSSIDInfo(INT ssidIndex) {
+    char result[64];
+
+    G_WIFI_MUTEX_LOCK(&g_wifi.sup_lock);
+    send_wpa_cli_command(result, sizeof(result)-1, "REMOVE_NETWORK 0");
+    send_wpa_cli_command(result, sizeof(result)-1, "SAVE_CONFIG");
+    return RETURN_OK;
+}
+
