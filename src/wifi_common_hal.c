@@ -797,3 +797,7 @@ INT wifi_getSSIDStatus(INT ssidIndex, CHAR *output_string) {
 INT wifi_applySSIDSettings(INT ssidIndex) {
     API_NOT_IMPLEMENTED;
 }
+
+INT wifi_getSpecificSSIDInfo(const char* SSID, WIFI_HAL_FREQ_BAND band, wifi_neighbor_ap_t **filtered_ap_array, UINT *output_array_size) {
+    API_NOT_IMPLEMENTED;
+}
