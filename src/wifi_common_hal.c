@@ -298,29 +298,6 @@ char* readFile(char *filename)
     return buf;
 }
 
-static int sysfs_get(char *path, unsigned int *out)
-{
-    FILE *f;
-    unsigned int tmp;
-    char buf[BUF_SIZE];
-
-    f = fopen(path, "r");
-    if(! f)
-        return(-1);
-    if(fgets(buf, BUF_SIZE, f) != buf)
-    {
-        fclose(f);
-        return(-1);
-    }
-    fclose(f);
-    if(sscanf(buf, "0x%x", &tmp) != 1 && sscanf(buf, "%u", &tmp) != 1)
-        return(-1);
-    *out = tmp;
-    return(0);
-}
-
-
-
 // Initializes the wifi subsystem (all radios)
 INT wifi_init() {
     int retry = 0;
