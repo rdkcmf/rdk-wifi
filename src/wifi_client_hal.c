@@ -1820,9 +1820,8 @@ int wifi_getRoamingControl(INT ssidIndex, wifi_roamingCtrl_t *pRoamingCtrlCfg)
         ptr = ptr + strlen(ptr) + 1;
         ptr = getValue(ptr, "kvr_enable");
         if (ptr == NULL) {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in getting kvr_enable. \n");
-            retStatus = RETURN_ERR;
-            goto exit_err;
+            // kvr_enable is not a mandatory param, in xi5 this param will not be available , hence don't return failure.
+            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in getting kvr_enable. \n"); 
         } else {
             pRoamingCtrlCfg->roam80211kvrEnable = strtol(ptr,NULL,10);
             RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: [%s] roam80211kvrEnable = %d\n",__FUNCTION__,pRoamingCtrlCfg->roam80211kvrEnable);
