@@ -1623,6 +1623,7 @@ INT wifi_applySSIDSettings(INT ssidIndex);
  */
 INT wifi_getNeighboringWiFiDiagnosticResult(INT radioIndex, wifi_neighbor_ap_t **neighbor_ap_array, UINT *output_array_size); //Tr181
 INT wifi_getSpecificSSIDInfo(const char* SSID, WIFI_HAL_FREQ_BAND band, wifi_neighbor_ap_t **filtered_ap_array, UINT *output_array_size);
-
+INT wifi_setRadioScanningFreqList(INT radioIndex, CHAR *freqList);
+INT wif_getDualBandSupport();
 /** @} */
 #endif

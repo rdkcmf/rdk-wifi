@@ -564,6 +564,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult(INT radioIndex, wifi_neighbor_ap_t *
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Trying to read Scan results \n"); // Lets read scan_results even if it is timed out FIX:- Xi-6 Scan timeout
     wpaCtrlSendCmd("SCAN_RESULTS");
     ap_count = parse_scan_results(return_buf, return_len);
+    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scan results contains %d BSSIDs. \n",ap_count);
     if (ap_count > 0) {
         int i;            
         *output_array_size = ap_count;
@@ -1328,6 +1329,29 @@ INT wifi_getRadioIfName(INT radioIndex, CHAR *output_string) {
     strcpy(output_string, "wlan0");
     return RETURN_OK;
 }
+INT wifi_setRadioScanningFreqList(INT radioIndex, CHAR *freqList)
+{
+   int result = RETURN_OK;
+   char cmd[BUF_SIZE];
+
+   memset(cmd,0,BUF_SIZE);
+   snprintf(cmd,BUF_SIZE,"SET freq_list %s",freqList);
+   pthread_mutex_lock(&wpa_sup_lock);
+   if(wpaCtrlSendCmd(cmd) != RETURN_OK)
+   {
+      result = RETURN_ERR;
+   }
+   pthread_mutex_unlock(&wpa_sup_lock);
+   return result;
+}
+INT wif_getDualBandSupport()
+{
+   if(isDualBandSupported() == true)
+      return 1;
+   else 
+      return 0;
+}
+
 
 INT wifi_setRadioChannelMode(INT radioIndex, CHAR *channelMode, BOOL gOnlyFlag, BOOL nOnlyFlag, BOOL acOnlyFlag) {
     return RETURN_OK;
