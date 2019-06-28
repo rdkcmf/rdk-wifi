@@ -28,6 +28,7 @@
 #define LOG_NMGR "LOG.RDK.WIFIHAL"
 #define MAX_SSID_LEN        32           /* Maximum SSID name */
 #define MAX_VERSION_LEN     16          /* Maximum Version Len */
+#define BUFF_LEN_1024       1024
 extern BOOL bNoAutoScan;
 
 ULONG ssid_number_of_entries = 0;
@@ -173,6 +174,8 @@ void monitor_wpa_health();
 static int wifi_getWpaSupplicantStatus();
 static int wifi_openWpaSupConnection();
 static INT wifi_getRadioSignalParameter (const CHAR* parameter, CHAR *output_string);
+
+
 INT wifi_getHalVersion(CHAR *output_string)
 {
     int retStatus  = RETURN_OK;
@@ -748,12 +751,62 @@ INT wifi_getRadioStandard(INT radioIndex, CHAR *output_string, BOOL *gOnly, BOOL
     return ret;
 }
 
+static void getPossibleChannelsFromCapability(char* channelCap,char *modeStr,char* output_string)
+{
+    char *pch=NULL,*final=NULL;
+    pch = strtok(channelCap,"\n");
+    while (pch != NULL)
+    {   
+        if(strstr(pch,modeStr))
+        {
+            pch=strchr(pch,':');
+            pch=pch+2;
+            final = pch;
+            while(*final != '\0')
+            {
+                if(*final == ' ')
+                {
+                    *final= ',';
+                }
+                final++;
+            }
+            break;
+        }
+        pch = strtok (NULL, "\n");
+    }
+    if(pch !=NULL)
+        strcpy(output_string,pch);
+}
+
 INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string) {
 
+    int ret;
+    char tmp_buff[BUFF_LEN_1024];
     if(!output_string) {
         return RETURN_ERR;
     }
-    snprintf(output_string, 64, "%s", (radioIndex==0)?"1-11":"36,40");
+    memset(tmp_buff,0,BUFF_LEN_1024);
+    pthread_mutex_lock (&wpa_sup_lock);
+    ret = wpaCtrlSendCmd ("GET_CAPABILITY channels");
+    if(ret == RETURN_OK)
+    {
+       strncpy(tmp_buff,return_buf,BUFF_LEN_1024);
+       pthread_mutex_unlock (&wpa_sup_lock);
+    }
+    else 
+    {
+       RDK_LOG( RDK_LOG_ERROR,LOG_NMGR,"Error in getting channel capability.\n");
+       pthread_mutex_unlock (&wpa_sup_lock);
+       return RETURN_ERR;
+    }
+    if(radioIndex == 1)
+    {
+        getPossibleChannelsFromCapability(tmp_buff,"Mode[A]",output_string);
+    }
+    else
+    {
+        getPossibleChannelsFromCapability(tmp_buff,"Mode[G]",output_string);
+    }
     return RETURN_OK;
 }
 
@@ -885,7 +938,7 @@ static INT wifi_getRadioSignalParameter (const CHAR* parameter, CHAR *output_str
         return RETURN_ERR;
     }
 
-    char *parameter_value = NULL;
+    char *parameter_value= NULL;
     int ret = RETURN_ERR;
 
     pthread_mutex_lock (&wpa_sup_lock);
