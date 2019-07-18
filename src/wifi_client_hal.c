@@ -272,9 +272,14 @@ static int find_ssid_in_scan_results(const char* ssid)
 {
     bool found = false;
     int i;
+    if(NULL == ssid || ssid[0] == '\0')
+    {
+        RDK_LOG (RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: SSID to find is null/empty");
+        return found;
+    }
     for (i = 0; i < ap_count; i++)
     {
-        if (strcmp (ap_list[i].ap_SSID, ssid) == 0)
+        if (strncmp (ap_list[i].ap_SSID, ssid,MAX_SSID_LEN) == 0)
         {
             RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: Found SSID match - bssid = %s rssi = %d ssid = %s\n",
                     ap_list[i].ap_BSSID, ap_list[i].ap_SignalStrength, ap_list[i].ap_SSID);
@@ -2002,7 +2007,6 @@ int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbor_ap_t 
     pthread_mutex_lock(&wpa_sup_lock);
     wpaCtrlSendCmd("SCAN_RESULTS");
     strncpy(tmpBuff,return_buf,sizeof(tmpBuff));
-    pthread_mutex_unlock(&wpa_sup_lock);
 
     // Parse scan result, So that global ap_list will be updated with new scan results
     ap_count = parse_scan_results (tmpBuff, strlen (tmpBuff));
@@ -2017,6 +2021,7 @@ int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbor_ap_t 
             break;
         }
     }
+    pthread_mutex_unlock(&wpa_sup_lock);
     return matchCount;
 }
 #ifdef WIFI_CLIENT_ROAMING

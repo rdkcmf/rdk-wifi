@@ -444,7 +444,7 @@ INT parse_scan_results(char *buf, size_t len)
     char flags[256];
     char *delim_ptr, *ptr, *encrypt_ptr,*security_ptr;
     int i;
-    if ((len == 0) || (buf == NULL)) return -1;
+    if ((len == 0) || (buf == NULL)) return count;
 
     /* example output:
         * bssid / frequency / signal level / flags / ssid
@@ -453,8 +453,11 @@ INT parse_scan_results(char *buf, size_t len)
 
     /* skip heading */
     ptr = strstr(buf,"/ ssid");
-    if (ptr == NULL) return -1;
+    if (ptr == NULL) return count;
     ptr += strlen("/ ssid") + 1;
+
+    // Memset ap_list before filling the list
+    memset(&ap_list,0,sizeof(ap_list));
 
     /* Parse scan results */
     while ((delim_ptr=strchr(ptr, '\t')) != NULL) {
@@ -463,7 +466,7 @@ INT parse_scan_results(char *buf, size_t len)
         memcpy(ap_list[count].ap_BSSID, ptr, (delim_ptr-ptr));
         ap_list[count].ap_BSSID[delim_ptr-ptr] = '\0';
 /*        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"bssid=%s \n",ap_list[count].ap_BSSID); */
-
+     
         /* Parse frequency band  */
         ptr = delim_ptr + 1;
         delim_ptr=strchr(ptr, '\t');
@@ -521,7 +524,9 @@ INT parse_scan_results(char *buf, size_t len)
         // *delim_ptr='\n'; // put back the '\n' after printf_decode
 
         ptr = delim_ptr + 1;
-        count++;
+        // increment ap_count only if bssid is filled properly
+        if(ap_list[count].ap_BSSID[0] != '\0')
+            count++;
     }
 
     return count;
