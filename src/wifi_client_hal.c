@@ -828,9 +828,8 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         ptr = getValue(ptr, "AVG_RSSI");
         if(ptr == NULL)
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: AVG_RSSI is not in signal_poll \n");
+            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: AVG_RSSI is not in signal_poll \n");
             stats->sta_AvgRSSI = 0;
-            goto exit;
         } else
         { 
             avgRssi = atoi(ptr);
