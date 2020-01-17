@@ -413,6 +413,14 @@ int wifi_getRoamingControl(int ssidIndex, wifi_roamingCtrl_t *pRoamingCtrl_data)
  */
 WiFiHalStatus_t getwifiStatusCode();
 
+/**
+ * @brief this call will cancel any in progress WPS operaiotn
+ *
+ * @returns WPS cancel status.
+ * @retval 0 if SUCCESFULLY cancels WPS operation, false in failure cases.
+ */
+INT wifi_cancelWpsPairing();
+
 /** @} */
 #else
 #error "! __WIFI_CLINET_HAL_H__"

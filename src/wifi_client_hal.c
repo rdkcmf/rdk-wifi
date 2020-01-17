@@ -164,7 +164,7 @@ INT parse_scan_results(char *buf, size_t len);
 
 BOOL bNoAutoScan=FALSE;
 char bUpdatedSSIDInfo=1;
-BOOL bIsWpsCompleted = FALSE;
+BOOL bIsWpsCompleted = TRUE;
 BOOL bIsPBCOverlapDetected = FALSE;
 
 /* Initialize the state of the supplicant */
@@ -420,10 +420,11 @@ void monitor_thread_task(void *param)
                      if(isDualBandSupported())                                          // For Xi6
                          stop_wifi_wps_connection();
                      else {                                                            // For Xi5
-                         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_PBC_OVERLAP");
+                         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_PBC_OVERLAP \n");
                          connError = WIFI_HAL_ERROR_NOT_FOUND;
                          if (callback_disconnect) (*callback_disconnect)(1, "", &connError);
                      }
+                     bIsWpsCompleted = TRUE;
                 }
 
                 else if(strstr(start, WPS_EVENT_SUCCESS) != NULL) {
@@ -718,7 +719,7 @@ static int is_zero_bssid(char* bssid) {
 void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
 {
     char *ptr;
-    char *bssid, *ssid;
+    char *bssid, *ssid,*key_mgmt;
     int phyrate, noise, rssi,freq,avgRssi;
     int retStatus = -1;
 
@@ -727,6 +728,8 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Input Stats is NULL \n");
         return;
     }
+
+    bssid = NULL; ssid = NULL; key_mgmt = NULL;
   
     /* Find the currently connected BSSID and run signal_poll command to get the stats */
     pthread_mutex_lock(&wpa_sup_lock);
@@ -749,6 +752,21 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
             goto exit;
         }
         printf_decode (stats->sta_SSID, sizeof(stats->sta_SSID), ssid);
+
+        // Get Security Mode from Status
+        ptr = ssid + strlen(ssid) + 1;
+        key_mgmt = getValue(ptr, "key_mgmt");
+        if(key_mgmt == NULL)
+        {
+            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: KEY_MGMT is NULL in Status output\n");
+            goto exit;
+        }
+        else
+        {
+            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: KEY_MGMT = %s \n");
+            strncpy(stats->sta_SecMode,key_mgmt,BUFF_LEN_32);
+        }
+
         // Check if we get proper BSSID from status, Else try to fetch from bss current
         if(is_zero_bssid(stats->sta_BSSID) == RETURN_OK) {
             if(wpaCtrlSendCmd("BSS current") == 0) {
@@ -816,6 +834,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         } else  {
             freq = atoi(ptr);
             RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"FREQUENCY=%d \t",freq);
+            stats->sta_Frequency = freq;
             if((freq / 1000) == 2)
                 strcpy(stats->sta_BAND,"2.4GHz");
             else if((freq / 1000) == 5)
@@ -986,13 +1005,33 @@ int parse_wps_pbc_accesspoints(char *buf,wifi_wps_pbc_ap_t ap_list[])
     return apCount;
 }
 
+// Cancel WPS Pairing Operation
+INT wifi_cancelWpsPairing ()
+{
+    int retStatus = RETURN_ERR;
+
+    // Check for any inprogress WPS operation
+    if(bIsWpsCompleted == FALSE)
+    {
+       stop_wifi_wps_connection();
+       retStatus = RETURN_OK;
+    }
+    else
+    {
+        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: No In-Progress WPS Operation, Skipping WPS_CANCEL. \n");
+    }
+    return retStatus;
+}
+
+
 // Cancel the WPS operation 
 void stop_wifi_wps_connection()
 {
     if(bIsWpsCompleted == FALSE)
     {
         RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Stopping  WPS operation.. \n");
-        pthread_cancel(wps_start_thread); // Lets forcefully stop the thread as we need to strictly maintain WPS time frame
+        if(isDualBandSupported())
+            pthread_cancel(wps_start_thread); // Lets forcefully stop the thread as we need to strictly maintain WPS time frame
 
         // Make sure that the mutex is not locked by wps thread & Cancel WPS operation
         if(pthread_mutex_trylock(&wpa_sup_lock) != 0)
@@ -1011,9 +1050,10 @@ void stop_wifi_wps_connection()
         connError = WIFI_HAL_ERROR_NOT_FOUND; 
         if (callback_disconnect) (*callback_disconnect)(1, "", &connError);
         if(bIsPBCOverlapDetected == TRUE)
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_PBC_OVERLAP");
+            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_PBC_OVERLAP\n");
         else
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_TIME_OUT");
+            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_TIME_OUT\n");
+        bIsWpsCompleted = TRUE;
     }
 }
 
@@ -1209,6 +1249,7 @@ INT wifi_setCliWpsButtonPush(INT ssidIndex){
   else
   {
       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: No Dual-Band support. Initiate Normal PBC.\n");
+      bIsWpsCompleted = FALSE;
       pthread_mutex_lock(&wpa_sup_lock);
       wpaCtrlSendCmd("WPS_PBC");
       pthread_mutex_unlock(&wpa_sup_lock);

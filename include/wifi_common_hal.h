@@ -453,11 +453,13 @@ typedef struct _wifi_sta_stats
 {
     CHAR  sta_SSID[64];         //!< The current connected SSID name.
     CHAR  sta_BSSID[64];        //!< The BSSID used for connected SSID.
-    CHAR  sta_BAND[16];        //!< The BAND used for connected SSID.
+    CHAR  sta_BAND[16];         //!< The BAND used for connected SSID.
+    CHAR  sta_SecMode[32];      //!< WiFi Security Mode WPA2-PSK , WPA2-EAP etc.. 
     FLOAT sta_PhyRate;          //!< Indicates the Physical rate (Mbps)
     FLOAT sta_Noise;            //!< Indicator of average noise strength (in dBm) received from the connected WiFi radio.
     FLOAT sta_RSSI;             //!< RSSI value in dBm
-    FLOAT sta_AvgRSSI;
+    FLOAT sta_AvgRSSI;          //!< Average RSSI in dBm
+    UINT  sta_Frequency;        //!< Current Operating Frequency.
     UINT  sta_LastDataDownlinkRate;		/**< The data transmit rate in kbps that was most recently used for transmission from the access point to the end point device. */
     UINT  sta_LastDataUplinkRate;		/**< The data transmit rate in kbps that was most recently used for transmission from the end point to the access point device.*/
     UINT  sta_Retransmissions;			/**< The number of packets that had to be re-transmitted, from the last 100 packets sent to the access point. \
