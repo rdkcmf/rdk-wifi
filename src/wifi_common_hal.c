@@ -1405,7 +1405,7 @@ INT wifi_setRadioScanningFreqList(INT radioIndex, CHAR *freqList)
    pthread_mutex_unlock(&wpa_sup_lock);
    return result;
 }
-INT wif_getDualBandSupport()
+INT wifi_getDualBandSupport()
 {
    if(isDualBandSupported() == true)
       return 1;
