@@ -317,7 +317,11 @@ INT wifi_init() {
    
     // Starting wpa_supplicant service if it is not already started
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Starting wpa_supplicant service \n ");
-    system("systemctl start wpa_supplicant"); 
+#ifndef RDKC
+    system("systemctl start wpa_supplicant");
+#else
+   system("/etc/init.d/wpa_supplicant.service restart");
+#endif
 
     /* Starting wpa_supplicant may take some time, try 10 times before giving up */
     retry = 0;    
@@ -399,8 +403,11 @@ INT wifi_uninit() {
     pthread_join (wpa_health_mon_thread, NULL);
 
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Stopping wpa_supplicant service\n");
+#ifndef RDKC
     system("systemctl stop wpa_supplicant");
-    
+#else
+    system("/etc/init.d/wpa_supplicant.service stop");
+#endif    
     init_done=false;
     return RETURN_OK;
 }

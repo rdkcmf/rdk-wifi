@@ -1076,7 +1076,7 @@ BOOL isDualBandSupported()
                 retStatus = false;
             }
         }
-        fclose(fp);
+        pclose(fp);
     }
     else
     {

@@ -44,6 +44,13 @@ export RDK_TOOLCHAIN_PATH=${RDK_TOOLCHAIN_PATH-`readlink -m $RDK_PROJECT_ROOT_PA
 export RDK_COMPONENT_NAME=${RDK_COMPONENT_NAME-`basename $RDK_SOURCE_PATH`}
 export RDK_DIR=$RDK_PROJECT_ROOT_PATH
 
+if [ "$XCAM_MODEL" == "SCHC2" ]; then
+. ${RDK_PROJECT_ROOT_PATH}/build/components/amba/sdk/setenv2
+else
+. ${RDK_PROJECT_ROOT_PATH}/build/components/sdk/setenv2
+fi
+
+
 # parse arguments
 INITIAL_ARGS=$@
 
@@ -84,33 +91,115 @@ ARGS=$@
 
 # component-specific vars
 export FSROOT=${RDK_FSROOT_PATH}
-
+export CFLAGS="-O3 -g -Wno-error -fPIC -DRDKC"
 
 # functional modules
 function configure()
 {
- true
+   if [ "$XCAM_MODEL" == "XHB1" ]; then
+        pd=`pwd`
+        cd ${RDK_SOURCE_PATH}
+        aclocal -I cfg
+        libtoolize --automake
+        automake --foreign --add-missing
+        rm -f configure
+        autoconf
+        echo "  CONFIG_MODE = $CONFIG_MODE"
+        configure_options=" "
+        configure_options=" --host=aarch64-linux --target=aarch64"
+        configure_options="$configure_options --enable-shared"
+        generic_options="$configure_options"
+         
+        export ac_cv_func_malloc_0_nonnull=yes
+        export ac_cv_func_memset=yes
+        export LDFLAGS+="-L${RDK_FSROOT_PATH}/usr/lib -llog4c -lrdkloggers -lwpa_client"
+	echo Hi $CFLAGS
+        export CFLAGS+=" --std=c99 -D_POSIX_C_SOURCE=199309L -I${RDK_SOURCE_PATH}/include -I${RDK_PROJECT_ROOT_PATH}/opensource/include/wpa_supplicant -I${RDK_PROJECT_ROOT_PATH}/rdklogger/include -I${RDK_FSROOT_PATH}/usr/include"
+        export libwifihal_la_LDFLAGS=" $libwifihal_la_LDFLAGS -L${RDK_SOURCE_PATH}/usr/lib -lwpa_client -L${RDK_FSROOT_PATH}/usr/lib -lrdkloggers"
+        autoreconf
+        ./configure $configure_options
+        cd $pd
+   else
+	true
+   fi
+
 }
 
 function clean()
 {
- true
+ if [ "$XCAM_MODEL" == "XHB1" ]; then
+
+   pd=`pwd`
+    dnames="${RDK_SOURCE_PATH}"
+    for dName in $dnames
+    do
+        cd $dName
+        if [ -f Makefile ]; then
+                make distclean
+        fi
+        rm -f configure;
+        rm -rf aclocal.m4 autom4te.cache config.log config.status libtool
+        find . -iname "Makefile.in" -exec rm -f {} \;
+        find . -iname "Makefile" | xargs rm -f
+        ls cfg/* | grep -v "Makefile.am" | xargs rm -f
+        cd $pd
+    done
+ else
+	true
+ fi
 }
 
 function build()
 {
- true
+ if [ "$XCAM_MODEL" == "XHB1" ]; then
+
+ cd ${RDK_SOURCE_PATH}
+    export LDFLAGS="$LDFLAGS -L${RDK_SDROOT}/usr/lib -lwpa_client -L${RDK_SDROOT}/usr/lib -L${RDK_SDROOT}/usr/local/lib ${LOG4C_LIBS} -lrdkloggers"
+    export CFLAGS="$CFLAGS --std=c99 -I${RDK_SOURCE_PATH}/include -I${RDK_PROJECT_ROOT_PATH}/opensource/include/wpa_supplicant -I${RDK_PROJECT_ROOT_PATH}/rdklogger/include -I${RDK_FSROOT_PATH}/usr/include "
+    export libwifihal_la_LDFLAGS=" $libwifihal_la_LDFLAGS -L${RDK_FSROOT_PATH}/usr/lib -lwpa_client -L${RDK_SDROOT}/usr/lib -L${RDK_SDROOT}/usr/local/lib -lrdkloggers"
+    if [ -f $RDK_PATCHES/fix-testwifi-wifi-hal-gen.patch ] && [ ! -f $RDK_PATCHES/.generic-wifi-hal.patched ]; then
+      cd $RDK_PROJECT_ROOT_PATH/generic/wifi-hal/test
+      cp $RDK_PATCHES/fix-testwifi-wifi-hal-gen.patch .
+      patch < fix-testwifi-wifi-hal-gen.patch
+      touch $RDK_PATCHES/.generic-wifi-hal.patched
+      cd -
+    fi
+    time make
+ else
+	true
+ fi
 }
 
 function rebuild()
 {
- true
+    clean
+    configure
+    build
 }
 
 function install()
 {
     cd ${RDK_SOURCE_PATH}/include
     cp -r wifi_ap_hal.h wifi_client_hal.h wifi_common_hal.h ${RDK_FSROOT_PATH}/usr/include
+    mkdir -p ${RDK_SDROOT}/usr/include/wifi-generic/
+    cp -r wifi_ap_hal.h wifi_client_hal.h wifi_common_hal.h ${RDK_SDROOT}/usr/include/wifi-generic/
+ 
+ if [ "$XCAM_MODEL" == "XHB1" ]; then
+    cd ${RDK_SOURCE_PATH}
+    mkdir -p ${RDK_SDROOT}/usr/lib/wifi-generic
+    if [ -f  ${RDK_SDROOT}/usr/lib/libwifihal.so ]; then
+      rm -rf ${RDK_SDROOT}/usr/lib/libwifihal.so*
+      rm -rf ${RDK_SDROOT}/usr/local/lib/libwifihal.so*
+    fi
+    if [ -f ${RDK_FSROOT_PATH}/usr/lib/libwifihal.so ]; then
+      rm -rf ${RDK_FSROOT_PATH}/usr/lib/libwifihal.so*
+    fi
+    cp -r ${RDK_SOURCE_PATH}/src/.libs/libwifihal.so* ${RDK_SDROOT}/usr/lib/wifi-generic/
+    cp -r ${RDK_SOURCE_PATH}/src/.libs/libwifihal.so* ${RDK_SDROOT}/usr/lib/
+    mkdir -p ${RDK_SDROOT}/usr/bin/wifi-generic/ 
+    cp -r ${RDK_SOURCE_PATH}/test/testwifi ${RDK_SDROOT}/usr/bin/wifi-generic/
+    make install DESTDIR=${RDK_SDROOT}
+ fi
 }
 
 

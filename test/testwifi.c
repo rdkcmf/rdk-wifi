@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <time.h>
+#include <sys/time.h>
 #include <pthread.h>
 #include <errno.h>
 #include "wifi_client_hal.h"
