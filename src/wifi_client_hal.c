@@ -608,3 +608,6 @@ INT wif_getDualBandSupport() {
 
 }
 
+INT wifi_cancelWpsPairing() {
+    return RETURN_OK;
+}
