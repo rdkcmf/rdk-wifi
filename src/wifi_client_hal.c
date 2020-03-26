@@ -719,7 +719,7 @@ static int is_zero_bssid(char* bssid) {
 void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
 {
     char *ptr;
-    char *bssid, *ssid,*key_mgmt;
+    char *bssid, *ssid;
     int phyrate, noise, rssi,freq,avgRssi;
     int retStatus = -1;
 
@@ -729,7 +729,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         return;
     }
 
-    bssid = NULL; ssid = NULL; key_mgmt = NULL;
+    bssid = NULL; ssid = NULL;
   
     /* Find the currently connected BSSID and run signal_poll command to get the stats */
     pthread_mutex_lock(&wpa_sup_lock);
@@ -753,35 +753,27 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         }
         printf_decode (stats->sta_SSID, sizeof(stats->sta_SSID), ssid);
 
-        // Get Security Mode from Status
-        ptr = ssid + strlen(ssid) + 1;
-        key_mgmt = getValue(ptr, "key_mgmt");
-        if(key_mgmt == NULL)
-        {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: KEY_MGMT is NULL in Status output\n");
-            goto exit;
-        }
-        else
-        {
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: KEY_MGMT = %s \n");
-            strncpy(stats->sta_SecMode,key_mgmt,BUFF_LEN_32);
+
+        if(wpaCtrlSendCmd("BSS current") == 0) {
+            char* token = strtok(return_buf, "\n");
+            while(token != NULL) {
+                if(strncmp(token,"bssid=",6) == 0) {
+                    // Check if we get proper BSSID from status no need to copy it
+                    if(is_zero_bssid(stats->sta_BSSID) == RETURN_OK) {
+                        sscanf(token,"bssid=%18s",stats->sta_BSSID);
+                    }
+                }
+                // Get Security Mode from curent BSSID
+                else if(strncmp(token,"flags=",6) == 0) {
+                    sscanf(token,"flags=%32s",stats->sta_SecMode);
+                    break;
+                }
+                token = strtok(NULL, "\n");
+            }
+        } else {
+            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get BSSID from BSS current\n");
         }
 
-        // Check if we get proper BSSID from status, Else try to fetch from bss current
-        if(is_zero_bssid(stats->sta_BSSID) == RETURN_OK) {
-            if(wpaCtrlSendCmd("BSS current") == 0) {
-                char* token = strtok(return_buf, "\n");
-                while(token != NULL) {
-                    if(strncmp(token,"bssid=",6) == 0) {
-                        sscanf(token,"bssid=%18s",stats->sta_BSSID);
-                        break;
-                    }
-                    token = strtok(NULL, "\n");
-                }
-             } else {
-                 RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get BSSID from BSS current\n");
-             }
-        }
     } else {
         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpaCtrlSendCmd(STATUS) failed - Ret = %d \n",retStatus);
         goto exit;
