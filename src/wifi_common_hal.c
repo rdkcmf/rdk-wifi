@@ -1048,6 +1048,7 @@ void monitor_wpa_health()
     int printInterval = 0;
     int pingCount = 0;
     int openStatus = -1;
+    int pingRecoveryCount = 0;
 
     while(true)
     {
@@ -1072,6 +1073,14 @@ void monitor_wpa_health()
                 retStatus = wifi_getWpaSupplicantStatus();
                 if(!retStatus) {
                     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_supplicant heartbeat success. , Breaking Ping attempts\n");
+                    // If the connection is alternatively failing for 3 times, Then it seems like an inconsistent connection, Lets reopen a new control connection. 
+                    if(pingRecoveryCount >= 2) {
+                        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_supplicant heartbeat - inconsistent control connection: Reopen new one.\n");
+                        wifi_openWpaSupConnection();
+                        pingRecoveryCount = 0;
+                    } else {
+                        pingRecoveryCount++;
+                    }
                     break; // Got one Success lets break
                 }
                 else
