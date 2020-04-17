@@ -603,7 +603,7 @@ INT wifi_clearSSIDInfo(INT ssidIndex) {
     return RETURN_OK;
 }
 
-INT wif_getDualBandSupport() {
+INT wifi_getDualBandSupport() {
     return RETURN_OK;
 
 }
