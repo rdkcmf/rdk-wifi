@@ -44,7 +44,7 @@ typedef uint8_t u8;
 extern size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
 
 #define LOG_NMGR "LOG.RDK.WIFIHAL"
-#define WPA_SUP_TIMEOUT     500000       /* 500 msec */
+#define WPA_SUP_TIMEOUT     5000         /* 5 msec */
 #define MAX_SSID_LEN        32           /* Maximum SSID name */
 #define MAX_PASSWORD_LEN    64           /* Maximum password length */
 #define ENET_LEN            17           /* Length of bytes for displaying an Ethernet address, e.g., 00:00:00:00:00:00.*/
