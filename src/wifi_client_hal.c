@@ -1480,6 +1480,11 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
     }
     fclose(f);
 
+    if(pairedSSIDInfo->ap_ssid[0] == '\0') {
+        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: No SSID in wpa_supplicant.conf\n");
+        return RETURN_ERR;
+    }
+
     RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: ap_ssid=[%s], ap_bssid=[%s]\n",
             __FUNCTION__, pairedSSIDInfo->ap_ssid, pairedSSIDInfo->ap_bssid);
 
