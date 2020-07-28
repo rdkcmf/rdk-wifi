@@ -1062,9 +1062,9 @@ BOOL isDualBandSupported()
 
     snprintf(cmd,sizeof(cmd),"iw list | grep 'Band' | tr '\n' ' '");
     fp = popen(cmd,"r");
-    if(fp != NULL)
+    if (fp != NULL)
     {
-        if((fgets(result,BUFF_LEN_64-1,fp)!=NULL) && (result[0] != '\0') )
+        if ((fgets(result, sizeof(result), fp) != NULL) && (result[0] != '\0'))
         {
             if((strstr(result,"Band 1:") != NULL) && (strstr(result,"Band 2:") != NULL))
             {
@@ -1438,12 +1438,13 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
         return RETURN_OK;
     }
     f = fopen("/opt/wifi/wpa_supplicant.conf", "r");
-    if(NULL == f)
+    if (NULL == f)
     {
         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to open wpa_supplicant.conf\n");
         return RETURN_ERR;
     }
-    while( fgets(buf, 512, f) != NULL) {
+    while (fgets(buf, sizeof(buf), f) != NULL)
+    {
         tokenKey=strtok(buf,"\"=");
         tokenValue=strtok(NULL,"\"=");
         trimSpace(tokenKey);

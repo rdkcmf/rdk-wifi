@@ -847,9 +847,9 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
     }
     snprintf(cmd,sizeof(cmd),"iw dev %s info | grep channel | cut -f 2 -d ','",interfaceName);
     fp = popen(cmd,"r");
-    if(fp != NULL)
+    if (fp != NULL)
     {
-        if((fgets(resultBuff,31,fp)!=NULL) && (resultBuff[0] != '\0') )
+        if ((fgets(resultBuff, sizeof (resultBuff), fp) != NULL) && (resultBuff[0] != '\0'))
         {
             sscanf(resultBuff,"%*s%d%*s",&bandWidth);    /* Expected output :-  " width: 80 MHz" */
             if(bandWidth != 0) {
@@ -1171,9 +1171,9 @@ INT wifi_getRadioTrafficStats(INT radioIndex, wifi_radioTrafficStats_t *output_s
     wifi_getRadioIfName(0,interfaceName);
     snprintf(cmd,sizeof(cmd),"cat /proc/net/dev | grep %s",interfaceName);
     fp = popen(cmd,"r");
-    if(fp != NULL)
+    if (fp != NULL)
     {
-        if(fgets(resultBuff,BUF_SIZE-1,fp)!=NULL)
+        if (fgets(resultBuff, sizeof (resultBuff), fp) != NULL)
         {
             numParams = sscanf( resultBuff," %[^:]: %lld %lld %lld %lld %*u %*u %*u %*u %lld %lld %lld %lld %*u %*u %*u %*u",interfaceName, &rx_bytes, &rx_packets,&rx_err,&rx_drop,&tx_bytes,&tx_packets,&tx_err,&tx_drop );
             if(numParams != 9)
@@ -1273,7 +1273,7 @@ INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
        fp = popen(cmd,"r");
        if (fp != NULL)
        {
-          if(fgets(resultBuff,BUF_SIZE-1,fp) != NULL)
+          if (fgets(resultBuff, sizeof (resultBuff), fp) != NULL)
           {
              sscanf(resultBuff,"%s",radio_status);
              if ( strcmp(radio_status,"up") == 0)
@@ -1288,13 +1288,13 @@ INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
              RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in executing `cat /sys/class/net/wlan0/operstate`  parsing \n");
              ret = RETURN_ERR;
           }
+          pclose(fp);
        }
        else
        {
           RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in popen() of sys/class/net/wlan0/operstate : %s \n",__FUNCTION__);
           ret=RETURN_ERR;
        }
-       pclose(fp);
     }
     return ret;
 }
