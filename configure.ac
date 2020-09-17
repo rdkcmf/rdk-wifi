@@ -19,7 +19,7 @@
 
 # Process this file with autoconf to produce a configure script.
 AC_PREREQ([2.69])
-AC_INIT([RDK-WIFI-HAL-INTERFACE], [1.0], [thomson_silvera@cable.comcast.com])
+AC_INIT([RDK-WIFI-HAL-INTERFACE], [1.0], [BUG-REPORT-ADDRESS])
 AC_CONFIG_SRCDIR([src])
 AC_CONFIG_MACRO_DIR([cfg])
 AC_CONFIG_AUX_DIR([cfg])
