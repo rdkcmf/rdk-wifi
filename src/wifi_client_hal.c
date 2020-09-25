@@ -1446,6 +1446,8 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
     while (fgets(buf, sizeof(buf), f) != NULL)
     {
         tokenKey=strtok(buf,"\"=");
+        if (tokenKey == NULL)
+            continue;
         tokenValue=strtok(NULL,"\"=");
         trimSpace(tokenKey);
         if((tokenValue != NULL) && (strcasecmp(tokenKey,"ssid") == 0))
