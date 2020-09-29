@@ -1406,7 +1406,7 @@ INT wifi_getRadioIfName(INT radioIndex, CHAR *output_string) {
     strcpy(output_string, "wlan0");
     return RETURN_OK;
 }
-INT wifi_setRadioScanningFreqList(INT radioIndex, CHAR *freqList)
+INT wifi_setRadioScanningFreqList(INT radioIndex, const CHAR *freqList)
 {
    int result = RETURN_OK;
    char cmd[BUF_SIZE];
