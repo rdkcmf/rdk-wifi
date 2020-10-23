@@ -802,7 +802,7 @@ INT wifi_getSpecificSSIDInfo(const char* SSID, WIFI_HAL_FREQ_BAND band, wifi_nei
     API_NOT_IMPLEMENTED;
 }
 
-INT wifi_setRadioScanningFreqList(INT radioIndex, CHAR *freqList) {
+INT wifi_setRadioScanningFreqList(INT radioIndex, const CHAR *freqList) {
     API_NOT_IMPLEMENTED;
 }
 
