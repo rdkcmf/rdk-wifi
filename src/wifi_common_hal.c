@@ -386,6 +386,14 @@ INT wifi_uninit() {
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Stopping monitor thread\n");
 
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Disconnecting from the network\n");
+    
+    //check if "init_done" is not true (if previous init is not successful)
+    //This helps to find if "wpa_health_mon_thread" created with a "pthread_create" during init or not.
+    if(init_done == false) {
+       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Previous wifi init is not successful\n");
+       return RETURN_OK;
+    }
+
 
     wpaCtrlSendCmd("DISCONNECT");
     wpaCtrlSendCmd("DISABLE_NETWORK 0");
