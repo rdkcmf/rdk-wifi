@@ -77,6 +77,8 @@ static struct _wifi_securityModes
     const char          *apSecurityEncryptionString;
 } wifi_securityModes[] =
 {
+    { "WPA2-WPA3","SAE","[WPA2-SAE-CCMP]" },
+    { "WPA2-WPA3","AES","[WPA2-PSK+SAE-CCMP]" },
     { "WPA-WPA2","TKIP","[WPA-PSK-TKIP][WPA2-PSK-TKIP]"},
     { "WPA-WPA2","AES","[WPA-PSK-CCMP][WPA2-PSK-CCMP]"},
     { "WPA-WPA2","TKIP,AES","[WPA-PSK-CCMP+TKIP][WPA2-PSK-CCMP+TKIP]"},

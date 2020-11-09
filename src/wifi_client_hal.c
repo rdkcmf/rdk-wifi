@@ -1302,14 +1302,14 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
   
   wpaCtrlSendCmd("ADD_NETWORK");
 
-  wpaCtrlSendCmd("SET_NETWORK 0 auth_alg OPEN");
-  
   /* Set SSID */
   sprintf(cmd_buf, "SET_NETWORK 0 ssid \"%s\"", AP_SSID);
   wpaCtrlSendCmd(cmd_buf);
-  
+
   if((AP_security_mode == WIFI_SECURITY_WPA_PSK_AES) || (AP_security_mode == WIFI_SECURITY_WPA2_PSK_AES) || (AP_security_mode == WIFI_SECURITY_WPA_PSK_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA2_PSK_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA_WPA2_PSK)){
       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is PSK\n");
+      /* Authentication algorithm */
+      wpaCtrlSendCmd("SET_NETWORK 0 auth_alg OPEN");
       /* Key Management */
       sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt WPA-PSK");
       wpaCtrlSendCmd(cmd_buf);
@@ -1329,9 +1329,78 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
         return RETURN_OK;
       }
   }
+  else if((AP_security_mode == WIFI_SECURITY_WPA3_PSK_AES) )
+  {
+      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is WPA2/WPA3\n" );
+      /* Frame Management */
+      sprintf(cmd_buf, "SET_NETWORK 0 ieee80211w 2");
+      wpaCtrlSendCmd(cmd_buf);
+      /* set the key-mgmt */
+      sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt SAE");
+      wpaCtrlSendCmd(cmd_buf);
+      /* Set the PSK */
+      sprintf(cmd_buf, "SET_NETWORK 0 psk \"%s\"", AP_security_PreSharedKey);
+      wpaCtrlSendCmd(cmd_buf);
+      if(strstr(return_buf, "FAIL") != NULL){
+          RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Password may not be falling within spec\n" );
+          wifiStatusCode_t connError;
+          connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
+          (*callback_connect)(1, AP_SSID, &connError);
+          pthread_mutex_unlock(&wpa_sup_lock);
+          if (!isPrivateSSID)
+          {
+              isPrivateSSID = 1;
+          }
+          return RETURN_OK;
+      }
+  }
+  else if((AP_security_mode == WIFI_SECURITY_WPA3_SAE) )
+  {
+      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is WPA3\n" );
+      /* Frame Management */
+      sprintf(cmd_buf, "SET_NETWORK 0 ieee80211w 2");
+      wpaCtrlSendCmd(cmd_buf);
+      /* Key Management */
+      sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt SAE");
+      wpaCtrlSendCmd(cmd_buf);
+      /* Set the sae_password */
+      sprintf(cmd_buf, "SET_NETWORK 0 sae_password \"%s\"", AP_security_PreSharedKey);
+      wpaCtrlSendCmd(cmd_buf);
+      sprintf(cmd_buf, "SET_NETWORK 0 psk \"%s\"", AP_security_PreSharedKey);
+      wpaCtrlSendCmd(cmd_buf);
+      if(strstr(return_buf, "FAIL") != NULL){
+          RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Password may not be falling within spec\n" );
+          wifiStatusCode_t connError;
+          connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
+          (*callback_connect)(1, AP_SSID, &connError);
+          pthread_mutex_unlock(&wpa_sup_lock);
+          if (!isPrivateSSID)
+          {
+              isPrivateSSID = 1;
+          }
+          return RETURN_OK;
+      }
+  }
   else if((AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_AES) || (AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_AES) || (AP_security_mode == WIFI_SECURITY_WPA_WPA2_ENTERPRISE) ){
       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is WPA Enterprise\n");
       sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt WPA-EAP");
+      wpaCtrlSendCmd(cmd_buf);
+  }
+  else if((AP_security_mode == WIFI_SECURITY_WEP_64) || (AP_security_mode == WIFI_SECURITY_WEP_128))
+  {
+      sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt NONE");
+      wpaCtrlSendCmd(cmd_buf);
+
+      /*
+       *Set the password as string or hex depends on the WEP key format.
+       *If password length for WEP64/WEP128 is 5/13 then it must be ASCII key format
+       */
+
+      if (strlen(AP_security_PreSharedKey) == 5 || strlen(AP_security_PreSharedKey) ==13)
+          sprintf(cmd_buf, "SET_NETWORK 0 wep_key0 \"%s\"", AP_security_PreSharedKey);
+      else
+          sprintf(cmd_buf, "SET_NETWORK 0 wep_key0 %s", AP_security_PreSharedKey);
+
       wpaCtrlSendCmd(cmd_buf);
   }
   else{
