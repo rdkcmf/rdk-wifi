@@ -673,7 +673,12 @@ int testWifiConnect(INT ssidIndex, CHAR *AP_SSID,CHAR *AP_security_KeyPassphrase
     int ret;
     int saveSSID=1;
     wpsWaitTime=TIME_WAIT;
+#ifndef RDKC
     ret=wifi_connectEndpoint(ssidIndex,AP_SSID,AP_security_mode,NULL,NULL,AP_security_KeyPassphrase,saveSSID,eapIdentity,carootcert,clientcert,privatekey);
+#else
+    ret=wifi_connectEndpoint(ssidIndex,AP_SSID,AP_security_mode,NULL,AP_security_KeyPassphrase,AP_security_KeyPassphrase,saveSSID,eapIdentity,carootcert,clientcert,privatekey);
+#endif
+
     if(ret)
     {
         printf("Error in connecting to ssid %s  with passphrase %s \n",AP_SSID,AP_security_KeyPassphrase);
