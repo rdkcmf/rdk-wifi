@@ -101,6 +101,7 @@ static struct RadioStruct
 };
 */
 
+#ifndef RDKC
 int main(int argc, char * argv[])
 {
     char value;
@@ -275,8 +276,32 @@ int main(int argc, char * argv[])
     }
 
 }
+#else
+int main(int argc, char * argv[])
+{
+    char ssid[72];
+    wifiSecurityMode_t securityMode;
+    char keyPassphrase[72];
 
+    wifi_connectEndpoint_callback_register(test_wifi_connect_callback);
+    wifi_disconnectEndpoint_callback_register(test_wifi_disconnect_callback);
 
+    if (argc < 2)
+    {
+      printf("\n Please enter ssid and password to connect. Eg testwifi testssid testpwd");
+      exit(0);
+    }
+
+    securityMode = 4;
+    strcpy(ssid, argv[1]);
+    strcpy(keyPassphrase, argv[2]);
+    test_wifi_init();
+    printf("wifi intialization done \n");
+
+    testWifiConnect(1,ssid,keyPassphrase,securityMode,NULL,NULL,NULL,NULL);
+    exit(0);
+}
+#endif
 
 #if 0
 int main(int argc, char * argv[])
