@@ -23,6 +23,8 @@
 # -e is the requirement from Build Framework
 set -e
 
+RDK_PATCHES=$RDK_PROJECT_ROOT_PATH/build/components/opensource/patch
+
 # default PATHs - use `man readlink` for more info
 # the path to combined build
 export RDK_PROJECT_ROOT_PATH=${RDK_PROJECT_ROOT_PATH-`readlink -m ..`}
@@ -96,7 +98,16 @@ export CFLAGS="-O3 -g -Wno-error -fPIC -DRDKC"
 # functional modules
 function configure()
 {
-   if [ "$XCAM_MODEL" == "XHB1" ]; then
+    if [ "$XCAM_MODEL" == "XHC3" ]; then
+        if [ -f $RDK_PATCHES/wifi-hal-gen-configure.patch ] && [ ! -f $RDK_PATCHES/.generic-wifi-hal_configure.patched ]; then
+            cd $RDK_PROJECT_ROOT_PATH/wifi-hal-generic/
+            cp $RDK_PATCHES/wifi-hal-gen-configure.patch .
+            patch < wifi-hal-gen-configure.patch
+            touch $RDK_PATCHES/.generic-wifi-hal_configure.patched
+            cd -
+        fi
+    fi
+   if [ "$XCAM_MODEL" == "XHB1" ] || [ "$XCAM_MODEL" == "XHC3" ]; then
         pd=`pwd`
         cd ${RDK_SOURCE_PATH}
         aclocal -I cfg
@@ -106,8 +117,12 @@ function configure()
         autoconf
         echo "  CONFIG_MODE = $CONFIG_MODE"
         configure_options=" "
+	if [ "$XCAM_MODEL" == "XHC3" ]; then
+	configure_options=" --host=arm-linux --target=arm-linux"
+	else
         configure_options=" --host=aarch64-linux --target=aarch64"
-        configure_options="$configure_options --enable-shared"
+	fi        
+	configure_options="$configure_options --enable-shared"
         generic_options="$configure_options"
          
         export ac_cv_func_malloc_0_nonnull=yes
@@ -127,7 +142,7 @@ function configure()
 
 function clean()
 {
- if [ "$XCAM_MODEL" == "XHB1" ]; then
+ if [ "$XCAM_MODEL" == "XHB1" ] || [ "$XCAM_MODEL" == "XHC3" ]; then
 
    pd=`pwd`
     dnames="${RDK_SOURCE_PATH}"
@@ -151,7 +166,7 @@ function clean()
 
 function build()
 {
- if [ "$XCAM_MODEL" == "XHB1" ]; then
+ if [ "$XCAM_MODEL" == "XHB1" ] || [ "$XCAM_MODEL" == "XHC3" ]; then
 
  cd ${RDK_SOURCE_PATH}
     export LDFLAGS="$LDFLAGS -L${RDK_SDROOT}/usr/lib -lwpa_client -L${RDK_SDROOT}/usr/lib -L${RDK_SDROOT}/usr/local/lib ${LOG4C_LIBS} -lrdkloggers"
@@ -184,7 +199,7 @@ function install()
     mkdir -p ${RDK_SDROOT}/usr/include/wifi-generic/
     cp -r wifi_ap_hal.h wifi_client_hal.h wifi_common_hal.h ${RDK_SDROOT}/usr/include/wifi-generic/
  
- if [ "$XCAM_MODEL" == "XHB1" ]; then
+ if [ "$XCAM_MODEL" == "XHB1" ] || [ "$XCAM_MODEL" == "XHC3" ]; then
     cd ${RDK_SOURCE_PATH}
     mkdir -p ${RDK_SDROOT}/usr/lib/wifi-generic
     if [ -f  ${RDK_SDROOT}/usr/lib/libwifihal.so ]; then
