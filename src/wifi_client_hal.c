@@ -739,7 +739,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         bssid = getValue(return_buf, "bssid");
         if (bssid == NULL) 
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: BSSID is NULL in Status output\n");
+            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: BSSID is NULL in Status output\n");
             goto exit;
         }
         else
@@ -748,7 +748,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         ssid = getValue(ptr, "ssid");
         if (ssid == NULL) 
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: SSID is NULL in Status output\n");
+            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: SSID is NULL in Status output\n");
             goto exit;
         }
         printf_decode (stats->sta_SSID, sizeof(stats->sta_SSID), ssid);
