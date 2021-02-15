@@ -834,12 +834,16 @@ INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string) {
 
 INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) {
 
-    char resultBuff[32];
+    char resultBuff[64];
     char cmd[64];
     char interfaceName[10];
     int  bandWidth = 0;
     FILE *fp = NULL;
     int ret = RETURN_ERR;
+    bool iw_info_failed=false;
+    char*  bandwidth_string=NULL;
+    char*  bandwidth_token=NULL;
+    bool bandwidth_found=false;
 
     if(!output_string) {
         return ret;
@@ -873,12 +877,60 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
         else
         {
             RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unable to read Channel width from iw \n");
+            iw_info_failed=true;
         }
         pclose(fp);
     }
     else
     {
         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: popen() failed. failure in getting Channel Bandwidth\n");
+        iw_info_failed=true;
+    }
+
+    if(true == iw_info_failed) //iw info fallback
+    {
+       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: iw info command failed, fall back to iw link command\n");
+       
+       memset(cmd,0,sizeof(cmd));
+       memset(resultBuff,0,sizeof(resultBuff));
+
+       snprintf(cmd,sizeof(cmd),"iw dev %s link | grep tx",interfaceName);
+       fp = popen(cmd,"r");
+       if (fp != NULL)
+       {
+           if ((fgets(resultBuff, sizeof (resultBuff), fp) != NULL) && (resultBuff[0] != '\0'))
+           {
+               char* resultBuff_P=resultBuff;         
+               while ((bandwidth_string = strtok_r(resultBuff_P, " ", &resultBuff_P)))
+               {
+                   bandwidth_token = strstr(bandwidth_string, "MHz");
+                   if(NULL != bandwidth_token )
+                   {   
+                       strcpy(output_string,bandwidth_string); //copy bandwidth string to o/p string
+                       bandwidth_found=true;
+                       break;
+                   }
+               }
+               if (true == bandwidth_found)
+	       {
+                   RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: OperatingChannelBandwidth =  %s\n",output_string);
+                   ret = RETURN_OK;   
+	       }
+	       else
+               {
+                    RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL:MHz information missing in iw link o/p \n");
+               }
+           }
+           else
+           {
+                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in getting bandwidth \n");
+           }				
+       }
+       else
+       {
+          RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: popen() failed. failure in getting Channel Bandwidth\n");
+       }
+
     }
     return ret;
 }
