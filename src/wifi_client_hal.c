@@ -765,7 +765,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
                 }
                 // Get Security Mode from curent BSSID
                 else if(strncmp(token,"flags=",6) == 0) {
-                    sscanf(token,"flags=%32s",stats->sta_SecMode);
+                    sscanf(token,"flags=%64s",stats->sta_SecMode);
                     break;
                 }
                 token = strtok(NULL, "\n");
