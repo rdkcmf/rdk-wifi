@@ -409,8 +409,8 @@ INT wifi_uninit() {
     }
 
     stop_monitor = true;
-    pthread_join (monitor_thread, NULL);
     pthread_join (wpa_health_mon_thread, NULL);
+    pthread_join (monitor_thread, NULL);
 
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Stopping wpa_supplicant service\n");
 #ifndef RDKC
