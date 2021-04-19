@@ -57,7 +57,7 @@ extern size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
 
 #define MAX_NEIGHBOR_LIMIT  32            /* Max number of APs in neighbor report */
 #ifdef WIFI_CLIENT_ROAMING
-#define WIFI_ROAMING_CONFIG_FILE "/opt/wifi/wifi_roamingControl.json"  /* Persistent storage for Roaming Configuration */
+#define WIFI_ROAMING_CONFIG_FILE "/opt/secure/wifi/wifi_roamingControl.json"  /* Persistent storage for Roaming Configuration */
 #define WIFI_DEFAULT_ROAMING_ENABLE false
 #define WIFI_DEFAULT_PRE_ASSN_BEST_THRLD -67
 #define WIFI_DEFAULT_PRE_ASSN_BEST_DELTA 3
@@ -1251,12 +1251,12 @@ INT wifi_setCliWpsButtonPush(INT ssidIndex){
 
   RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Deleting conf file and making a new one\n");
 
-  if(remove("/opt/wifi/wpa_supplicant.conf") == 0){
+  if(remove("/opt/secure/wifi/wpa_supplicant.conf") == 0){
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Removed File\n");
   }
 
   FILE* fp;
-  fp = fopen("/opt/wifi/wpa_supplicant.conf", "w");
+  fp = fopen("/opt/secure/wifi/wpa_supplicant.conf", "w");
   if(fp == NULL){
     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Error in opening configuration file\n");
     return RETURN_ERR;
@@ -1506,7 +1506,7 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
         strcpy(pairedSSIDInfo->ap_passphrase,passphrase);
         return RETURN_OK;
     }
-    f = fopen("/opt/wifi/wpa_supplicant.conf", "r");
+    f = fopen("/opt/secure/wifi/wpa_supplicant.conf", "r");
     if (NULL == f)
     {
         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to open wpa_supplicant.conf\n");

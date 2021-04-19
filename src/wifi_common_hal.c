@@ -134,7 +134,7 @@ extern size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
 #define CA_ROOT_CERT_PATH      "/opt/lnf/ca-chain.cert.pem"
 #define CA_CLIENT_CERT_PATH    "/opt/lnf/xi5device.cert.pem"
 #define CA_PRIVATE_KEY_PATH    "/opt/lnf/xi5device.key.pem"
-#define WPA_SUP_CONFIG         "/opt/wifi/wpa_supplicant.conf"
+#define WPA_SUP_CONFIG         "/opt/secure/wifi/wpa_supplicant.conf"
 
 #define WPA_SUP_PIDFILE         "/var/run/wpa_supplicant/wlan0.pid"
 #define WPA_SUP_CTRL            "/var/run/wpa_supplicant/wlan0"
