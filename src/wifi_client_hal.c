@@ -429,6 +429,7 @@ void monitor_thread_task(void *param)
 
                 else if(strstr(start, WPS_EVENT_SUCCESS) != NULL) {
                     bIsWpsCompleted = TRUE;
+		    bNoAutoScan = FALSE;//Setting bNoAutoScan as FALSE since WPS is successful
                     RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WPS is successful...Associating now\n");
                 }
 
@@ -1015,6 +1016,7 @@ INT wifi_cancelWpsPairing ()
 // Cancel the WPS operation 
 void stop_wifi_wps_connection()
 {
+    bNoAutoScan = FALSE;//Setting bNoAutoScan as FALSE since WPS fails
     if(bIsWpsCompleted == FALSE)
     {
         RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Stopping  WPS operation.. \n");
@@ -1146,7 +1148,6 @@ void start_wifi_wps_connection(void *param)
         wpaCtrlSendCmd("SCAN_RESULTS");
         strncpy(tmpBuff,return_buf,sizeof(tmpBuff));
         pthread_mutex_unlock(&wpa_sup_lock);
-        bNoAutoScan=FALSE;
         cur_scan_state = WIFI_HAL_WPA_SUP_SCAN_STATE_IDLE;
         apCount = parse_wps_pbc_accesspoints(tmpBuff,ap_list);
         if(apCount != 0)
