@@ -461,7 +461,6 @@ typedef struct _wifi_sta_stats
     FLOAT sta_PhyRate;          //!< Indicates the Physical rate (Mbps)
     FLOAT sta_Noise;            //!< Indicator of average noise strength (in dBm) received from the connected WiFi radio.
     FLOAT sta_RSSI;             //!< RSSI value in dBm
-    FLOAT sta_AvgRSSI;          //!< Average RSSI in dBm
     UINT  sta_Frequency;        //!< Current Operating Frequency.
     UINT  sta_LastDataDownlinkRate;		/**< The data transmit rate in kbps that was most recently used for transmission from the access point to the end point device. */
     UINT  sta_LastDataUplinkRate;		/**< The data transmit rate in kbps that was most recently used for transmission from the end point to the access point device.*/

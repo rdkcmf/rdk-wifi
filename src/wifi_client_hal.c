@@ -837,14 +837,10 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         // Read Average RSSI
         ptr = ptr + strlen(ptr) + 1;
         ptr = getValue(ptr, "AVG_RSSI");
-        if(ptr == NULL)
+        if(ptr != NULL)
         {
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: AVG_RSSI is not in signal_poll \n");
-            stats->sta_AvgRSSI = 0;
-        } else
-        { 
             avgRssi = atoi(ptr);
-            stats->sta_AvgRSSI = avgRssi;
+            stats->sta_RSSI = avgRssi;
             RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"AVG_RSSI=%d \n",avgRssi);
         }
     }
@@ -853,7 +849,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpaCtrlSendCmd(SIGNAL_POLL) failed ret = %d\n",retStatus);
         goto exit;
     }
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"bssid=%s,ssid=%s,rssi=%d,phyrate=%d,noise=%d,Band=%s,AvgRssi=%d\n",stats->sta_BSSID,stats->sta_SSID,(int)stats->sta_RSSI,(int)stats->sta_PhyRate,(int)stats->sta_Noise,stats->sta_BAND,(int)stats->sta_AvgRSSI);
+    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"bssid=%s,ssid=%s,rssi=%d,phyrate=%d,noise=%d,Band=%s\n",stats->sta_BSSID,stats->sta_SSID,(int)stats->sta_RSSI,(int)stats->sta_PhyRate,(int)stats->sta_Noise,stats->sta_BAND);
 exit:
     pthread_mutex_unlock(&wpa_sup_lock);
     return;
