@@ -20,7 +20,7 @@
 <environment>
   <components>
     <wifi-hal-generic>
-     <dependencies>sdk,glib-2.42.2,wpa_supplicant</dependencies>
+     <dependencies>sdk,glib-2.42.2,wpa_supplicant,log4c,rdklogger</dependencies>
      <is_coverity_supported>True</is_coverity_supported>
     </wifi-hal-generic>
    </components>
