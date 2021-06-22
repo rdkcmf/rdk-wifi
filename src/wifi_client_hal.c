@@ -49,7 +49,7 @@ extern size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
 #define MAX_PASSWORD_LEN    64           /* Maximum password length */
 #define ENET_LEN            17           /* Length of bytes for displaying an Ethernet address, e.g., 00:00:00:00:00:00.*/
 #define CSPEC_LEN           20           /* Channel Spec string length */
-#define RETURN_BUF_LENGTH   16384         /* Return buffer length */
+#define RETURN_BUF_LENGTH   (96*1024)         /* Return buffer length */
 #define BUFF_LEN_32         MAX_SSID_LEN /* Buffer Length 32 */
 #define BUFF_LEN_64         64           /* Buffer Length 64*/
 #define MAX_WPS_AP_COUNT    5            /* Max number of PBC enabled Access Points */

@@ -165,7 +165,7 @@ struct wpa_ctrl *g_wpa_ctrl= NULL;
 struct wpa_ctrl *g_wpa_monitor = NULL; 
 WIFI_HAL_WPA_SUP_SCAN_STATE cur_scan_state = WIFI_HAL_WPA_SUP_SCAN_STATE_IDLE;
 pthread_mutex_t wpa_sup_lock;
-char cmd_buf[1024], return_buf[16384];
+char cmd_buf[1024], return_buf[96*1024];
 char event_buf[4096];
 wifi_neighbor_ap_t ap_list[512];
 
@@ -477,7 +477,7 @@ INT parse_scan_results(char *buf, size_t len)
     memset(&ap_list,0,sizeof(ap_list));
 
     /* Parse scan results */
-    while ((delim_ptr=strchr(ptr, '\t')) != NULL) {
+    while (((delim_ptr=strchr(ptr, '\t')) != NULL) && (count < sizeof(ap_list)/sizeof(wifi_neighbor_ap_t))) {
 
         /* Parse bssid */
         memcpy(ap_list[count].ap_BSSID, ptr, (delim_ptr-ptr));
@@ -542,7 +542,8 @@ INT parse_scan_results(char *buf, size_t len)
 
         ptr = delim_ptr + 1;
         // increment ap_count only if bssid is filled properly
-        if(ap_list[count].ap_BSSID[0] != '\0')
+	// increment ap_count for non-empty SSIDs.
+        if(ap_list[count].ap_BSSID[0] != '\0' && ap_list[count].ap_SSID[0] != '\0')
             count++;
     }
 
