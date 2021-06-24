@@ -904,7 +904,7 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
                char* resultBuff_P=resultBuff;         
                while ((bandwidth_string = strtok_r(resultBuff_P, " ", &resultBuff_P)))
                {
-                   bandwidth_token = strstr(bandwidth_string, "MHz");
+                   bandwidth_token = strcasestr(bandwidth_string, "MHz");
                    if(NULL != bandwidth_token )
                    {   
                        strcpy(output_string,bandwidth_string); //copy bandwidth string to o/p string
