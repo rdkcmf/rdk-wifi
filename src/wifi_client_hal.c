@@ -710,152 +710,6 @@ void monitor_thread_task(void *param)
     } /* End while loop */
 } /* End monitor_thread function */
 
-static int is_zero_bssid(char* bssid) {
-    if(bssid == NULL) 
-        return RETURN_ERR;
-    else  
-        return strncmp(bssid,"00:00:00:00:00:00",17);
-}
-
-void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
-{
-    char *ptr;
-    char *bssid, *ssid;
-    int phyrate, noise, rssi,freq,avgRssi;
-    int retStatus = -1;
-
-    if(NULL == stats)
-    {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Input Stats is NULL \n");
-        return;
-    }
-
-    bssid = NULL; ssid = NULL;
-  
-    /* Find the currently connected BSSID and run signal_poll command to get the stats */
-    pthread_mutex_lock(&wpa_sup_lock);
-    retStatus = wpaCtrlSendCmd("STATUS");
-    if(retStatus == 0)
-    {
-        bssid = getValue(return_buf, "bssid");
-        if (bssid == NULL) 
-        {
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: BSSID is NULL in Status output\n");
-            goto exit;
-        }
-        else
-            strcpy(stats->sta_BSSID, bssid);
-        ptr = bssid + strlen(bssid) + 1;
-        ssid = getValue(ptr, "ssid");
-        if (ssid == NULL) 
-        {
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: SSID is NULL in Status output\n");
-            goto exit;
-        }
-        printf_decode (stats->sta_SSID, sizeof(stats->sta_SSID), ssid);
-
-
-        if(wpaCtrlSendCmd("BSS current") == 0) {
-            char* token = strtok(return_buf, "\n");
-            while(token != NULL) {
-                if(strncmp(token,"bssid=",6) == 0) {
-                    // Check if we get proper BSSID from status no need to copy it
-                    if(is_zero_bssid(stats->sta_BSSID) == RETURN_OK) {
-                        sscanf(token,"bssid=%18s",stats->sta_BSSID);
-                    }
-                }
-                // Get Security Mode from curent BSSID
-                else if(strncmp(token,"flags=",6) == 0) {
-                    sscanf(token,"flags=%64s",stats->sta_SecMode);
-                    break;
-                }
-                token = strtok(NULL, "\n");
-            }
-        } else {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get BSSID from BSS current\n");
-        }
-
-    } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpaCtrlSendCmd(STATUS) failed - Ret = %d \n",retStatus);
-        goto exit;
-    }
-
-    retStatus = wpaCtrlSendCmd("SIGNAL_POLL");
-    if(retStatus == 0)
-    {
-        ptr = getValue(return_buf, "RSSI");
-    
-        if (ptr == NULL)
-        {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: RSSI not in signal poll \n");
-            goto exit;
-        }
-        else {
-            rssi = atoi(ptr);
-            stats->sta_RSSI = rssi; 
-        }
-        ptr = ptr + strlen(ptr) + 1;
-        ptr = getValue(ptr, "LINKSPEED");
-        if (ptr == NULL)
-        {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: LINKSPEED not in signal poll \n");
-            goto exit;
-        }
-        else {
-            phyrate = atoi(ptr);
-            stats->sta_PhyRate = phyrate; 
-        }    
-    
-        ptr = ptr + strlen(ptr) + 1;
-        ptr = getValue(ptr, "NOISE");
-        if (ptr == NULL)
-        {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: NOISE not in signal poll \n");
-            goto exit;
-        }
-        else {
-            noise = atoi(ptr);
-            stats->sta_Noise = noise; 
-        }
-
-        ptr = ptr + strlen(ptr) + 1;
-        ptr = getValue(ptr, "FREQUENCY");
-        if(ptr == NULL)
-        {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: FREQUENCY not in signal poll \n");
-            goto exit;
-        } else  {
-            freq = atoi(ptr);
-            RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"FREQUENCY=%d \t",freq);
-            stats->sta_Frequency = freq;
-            if((freq / 1000) == 2)
-                strcpy(stats->sta_BAND,"2.4GHz");
-            else if((freq / 1000) == 5)
-                strcpy(stats->sta_BAND,"5GHz");
-            else
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unknown freq band.\n");
-        }
-        // Read Average RSSI
-        ptr = ptr + strlen(ptr) + 1;
-        ptr = getValue(ptr, "AVG_RSSI");
-        if(ptr != NULL)
-        {
-            avgRssi = atoi(ptr);
-            stats->sta_RSSI = avgRssi;
-            RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"AVG_RSSI=%d \n",avgRssi);
-        }
-    }
-    else
-    {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpaCtrlSendCmd(SIGNAL_POLL) failed ret = %d\n",retStatus);
-        goto exit;
-    }
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"bssid=%s,ssid=%s,rssi=%d,phyrate=%d,noise=%d,Band=%s\n",stats->sta_BSSID,stats->sta_SSID,(int)stats->sta_RSSI,(int)stats->sta_PhyRate,(int)stats->sta_Noise,stats->sta_BAND);
-exit:
-    pthread_mutex_unlock(&wpa_sup_lock);
-    return;
-}
-
 
 /**************************************************************************************************/
 /*WIFI WPS Related Functions                                                                      */
@@ -1303,7 +1157,12 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
   sprintf(cmd_buf, "SET_NETWORK 0 ssid \"%s\"", AP_SSID);
   wpaCtrlSendCmd(cmd_buf);
 
-  if((AP_security_mode == WIFI_SECURITY_WPA_PSK_AES) || (AP_security_mode == WIFI_SECURITY_WPA2_PSK_AES) || (AP_security_mode == WIFI_SECURITY_WPA_PSK_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA2_PSK_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA_WPA2_PSK)){
+  if (AP_security_mode == WIFI_SECURITY_WPA_PSK_AES ||
+      AP_security_mode == WIFI_SECURITY_WPA2_PSK_AES ||
+      AP_security_mode == WIFI_SECURITY_WPA_PSK_TKIP ||
+      AP_security_mode == WIFI_SECURITY_WPA2_PSK_TKIP ||
+      AP_security_mode == WIFI_SECURITY_WPA_WPA2_PSK)
+  {
       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is PSK\n");
       /* Authentication algorithm */
       wpaCtrlSendCmd("SET_NETWORK 0 auth_alg OPEN");
@@ -1326,7 +1185,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
         return RETURN_OK;
       }
   }
-  else if((AP_security_mode == WIFI_SECURITY_WPA3_PSK_AES) )
+  else if (AP_security_mode == WIFI_SECURITY_WPA3_PSK_AES)
   {
       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is WPA2/WPA3\n" );
       /* Frame Management */
@@ -1351,7 +1210,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
           return RETURN_OK;
       }
   }
-  else if((AP_security_mode == WIFI_SECURITY_WPA3_SAE) )
+  else if (AP_security_mode == WIFI_SECURITY_WPA3_SAE)
   {
       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is WPA3\n" );
       /* Frame Management */
@@ -1378,15 +1237,21 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
           return RETURN_OK;
       }
   }
-  else if((AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_AES) || (AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_AES) || (AP_security_mode == WIFI_SECURITY_WPA_WPA2_ENTERPRISE) ){
+  else if (AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_TKIP ||
+           AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_AES ||
+           AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_TKIP ||
+           AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_AES ||
+           AP_security_mode == WIFI_SECURITY_WPA_WPA2_ENTERPRISE)
+  {
       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is WPA Enterprise\n");
       sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt WPA-EAP");
       wpaCtrlSendCmd(cmd_buf);
   }
-  else if((AP_security_mode == WIFI_SECURITY_WEP_64) || (AP_security_mode == WIFI_SECURITY_WEP_128))
+  else if (AP_security_mode == WIFI_SECURITY_WEP_64 ||
+           AP_security_mode == WIFI_SECURITY_WEP_128)
   {
-      sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt NONE");
-      wpaCtrlSendCmd(cmd_buf);
+      wpaCtrlSendCmd("SET_NETWORK 0 key_mgmt NONE");
+      wpaCtrlSendCmd("SET_NETWORK 0 auth_alg OPEN SHARED");
 
       /*
        *Set the password as string or hex depends on the WEP key format.
@@ -1411,9 +1276,15 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
   /* Allow us to connect to hidden SSIDs */
   wpaCtrlSendCmd("SET_NETWORK 0 scan_ssid 1");
       
-  if((AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_AES) || (AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_TKIP) ||
-      (AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_AES)|| (AP_security_mode == WIFI_SECURITY_WPA_WPA2_ENTERPRISE) || (AP_security_mode == WIFI_SECURITY_WPA_PSK_AES) || (AP_security_mode == WIFI_SECURITY_WPA2_PSK_AES) || (AP_security_mode == WIFI_SECURITY_WPA_WPA2_PSK)){
-          
+  if (AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_TKIP ||
+      AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_AES ||
+      AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_TKIP ||
+      AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_AES ||
+      AP_security_mode == WIFI_SECURITY_WPA_WPA2_ENTERPRISE ||
+      AP_security_mode == WIFI_SECURITY_WPA_PSK_AES ||
+      AP_security_mode == WIFI_SECURITY_WPA2_PSK_AES ||
+      AP_security_mode == WIFI_SECURITY_WPA_WPA2_PSK)
+  {
       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Setting TKIP values\n");
     
       wpaCtrlSendCmd("SET_NETWORK 0 pairwise CCMP TKIP");
@@ -1423,8 +1294,12 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       wpaCtrlSendCmd("SET_NETWORK 0 proto WPA RSN");
   }
   
-  if((AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_AES) || (AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_TKIP) || (AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_AES) || (AP_security_mode == WIFI_SECURITY_WPA_WPA2_ENTERPRISE)){
-    
+  if (AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_TKIP ||
+      AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_AES ||
+      AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_TKIP ||
+      AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_AES ||
+      AP_security_mode == WIFI_SECURITY_WPA_WPA2_ENTERPRISE)
+  {
       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL:EAP Identity %s\n", eapIdentity);
       sprintf(cmd_buf, "SET_NETWORK 0 identity \"%s\"", eapIdentity);
       

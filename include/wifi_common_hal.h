@@ -458,6 +458,7 @@ typedef struct _wifi_sta_stats
     CHAR  sta_BSSID[64];        //!< The BSSID used for connected SSID.
     CHAR  sta_BAND[16];         //!< The BAND used for connected SSID.
     CHAR  sta_SecMode[64];      //!< WiFi Security Mode WPA2-PSK , WPA2-EAP etc.. 
+    CHAR  sta_Encryption[64];   //!< WiFi Encryption Type AES, TKIP, etc.
     FLOAT sta_PhyRate;          //!< Indicates the Physical rate (Mbps)
     FLOAT sta_Noise;            //!< Indicator of average noise strength (in dBm) received from the connected WiFi radio.
     FLOAT sta_RSSI;             //!< RSSI value in dBm

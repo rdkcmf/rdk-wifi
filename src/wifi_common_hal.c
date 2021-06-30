@@ -81,10 +81,10 @@ static struct _wifi_securityModes
     const char          *apSecurityEncryptionString;
 } wifi_securityModes[] =
 {
-    { "WPA2-SAE-CCMP","SAE","[WPA2-SAE-CCMP]" },
-    { "WPA2-SAE-CCMP","SAE","[WPA2-SAE-CCMP-preauth]" },
-    { "WPA2-PSK+SAE-CCMP","AES","[WPA2-PSK+SAE-CCMP]" },
-    { "WPA2-PSK+SAE-CCMP","AES","[WPA2-PSK+SAE-CCMP-preauth]" },
+    { "WPA3","AES","[WPA2-SAE-CCMP]" },
+    { "WPA3","AES","[WPA2-SAE-CCMP-preauth]" },
+    { "WPA2-WPA3","AES","[WPA2-PSK+SAE-CCMP]" },
+    { "WPA2-WPA3","AES","[WPA2-PSK+SAE-CCMP-preauth]" },
     { "WPA-WPA2","TKIP","[WPA-PSK-TKIP][WPA2-PSK-TKIP]"},
     { "WPA-WPA2","TKIP","[WPA-PSK-TKIP][WPA2-PSK-TKIP-preauth]"},
     { "WPA-WPA2","AES","[WPA-PSK-TKIP][WPA2-PSK-CCMP-preauth]"},
@@ -468,6 +468,170 @@ INT wifi_down() {
     return RETURN_OK;
 }
 
+static void get_security_mode_and_encryption_type(const char* wpa_supplicant_ap_flags, char* security_mode, char* encryption_type)
+{
+    int len = sizeof ( wifi_securityModes ) / sizeof ( wifi_securityModes[0] );
+    for (int i = 0; i < len; i++)
+    {
+        if (NULL != strcasestr(wpa_supplicant_ap_flags, wifi_securityModes[i].apSecurityEncryptionString))
+        {
+            strcpy(security_mode, wifi_securityModes[i].modeString);
+            strcpy(encryption_type, wifi_securityModes[i].encryptionString);
+            return;
+        }
+    }
+    security_mode[0] = '\0';
+    encryption_type[0] = '\0';
+}
+
+static int is_zero_bssid(char* bssid) {
+    if(bssid == NULL)
+        return RETURN_ERR;
+    else
+        return strncmp(bssid,"00:00:00:00:00:00",17);
+}
+
+void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
+{
+    char *ptr;
+    char *bssid, *ssid;
+    int phyrate, noise, rssi,freq,avgRssi;
+    int retStatus = -1;
+
+    if(NULL == stats)
+    {
+        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Input Stats is NULL \n");
+        return;
+    }
+
+    bssid = NULL; ssid = NULL;
+
+    /* Find the currently connected BSSID and run signal_poll command to get the stats */
+    pthread_mutex_lock(&wpa_sup_lock);
+    retStatus = wpaCtrlSendCmd("STATUS");
+    if(retStatus == 0)
+    {
+        bssid = getValue(return_buf, "bssid");
+        if (bssid == NULL)
+        {
+            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: BSSID is NULL in Status output\n");
+            goto exit;
+        }
+        else
+            strcpy(stats->sta_BSSID, bssid);
+        ptr = bssid + strlen(bssid) + 1;
+        ssid = getValue(ptr, "ssid");
+        if (ssid == NULL)
+        {
+            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: SSID is NULL in Status output\n");
+            goto exit;
+        }
+        printf_decode (stats->sta_SSID, sizeof(stats->sta_SSID), ssid);
+
+
+        if(wpaCtrlSendCmd("BSS current") == 0) {
+            char* token = strtok(return_buf, "\n");
+            while(token != NULL) {
+                if(strncmp(token,"bssid=",6) == 0) {
+                    // Check if we get proper BSSID from status no need to copy it
+                    if(is_zero_bssid(stats->sta_BSSID) == RETURN_OK) {
+                        sscanf(token,"bssid=%18s",stats->sta_BSSID);
+                    }
+                }
+                // Get Security Mode from curent BSSID
+                else if(strncmp(token,"flags=",6) == 0) {
+                    char flags[64];
+                    sscanf(token,"flags=%64s",flags);
+                    get_security_mode_and_encryption_type(flags, stats->sta_SecMode, stats->sta_Encryption);
+                    break;
+                }
+                token = strtok(NULL, "\n");
+            }
+        } else {
+            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get BSSID from BSS current\n");
+        }
+
+    } else {
+        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpaCtrlSendCmd(STATUS) failed - Ret = %d \n",retStatus);
+        goto exit;
+    }
+
+    retStatus = wpaCtrlSendCmd("SIGNAL_POLL");
+    if(retStatus == 0)
+    {
+        ptr = getValue(return_buf, "RSSI");
+
+        if (ptr == NULL)
+        {
+            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: RSSI not in signal poll \n");
+            goto exit;
+        }
+        else {
+            rssi = atoi(ptr);
+            stats->sta_RSSI = rssi;
+        }
+        ptr = ptr + strlen(ptr) + 1;
+        ptr = getValue(ptr, "LINKSPEED");
+        if (ptr == NULL)
+        {
+            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: LINKSPEED not in signal poll \n");
+            goto exit;
+        }
+        else {
+            phyrate = atoi(ptr);
+            stats->sta_PhyRate = phyrate;
+        }
+
+        ptr = ptr + strlen(ptr) + 1;
+        ptr = getValue(ptr, "NOISE");
+        if (ptr == NULL)
+        {
+            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: NOISE not in signal poll \n");
+            goto exit;
+        }
+        else {
+            noise = atoi(ptr);
+            stats->sta_Noise = noise;
+        }
+
+        ptr = ptr + strlen(ptr) + 1;
+        ptr = getValue(ptr, "FREQUENCY");
+        if(ptr == NULL)
+        {
+            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: FREQUENCY not in signal poll \n");
+            goto exit;
+        } else  {
+            freq = atoi(ptr);
+            RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"FREQUENCY=%d \t",freq);
+            stats->sta_Frequency = freq;
+            if((freq / 1000) == 2)
+                strcpy(stats->sta_BAND,"2.4GHz");
+            else if((freq / 1000) == 5)
+                strcpy(stats->sta_BAND,"5GHz");
+            else
+                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unknown freq band.\n");
+        }
+        // Read Average RSSI
+        ptr = ptr + strlen(ptr) + 1;
+        ptr = getValue(ptr, "AVG_RSSI");
+        if(ptr != NULL)
+        {
+            avgRssi = atoi(ptr);
+            stats->sta_RSSI = avgRssi;
+            RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"AVG_RSSI=%d \n",avgRssi);
+        }
+    }
+    else
+    {
+        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpaCtrlSendCmd(SIGNAL_POLL) failed ret = %d\n",retStatus);
+        goto exit;
+    }
+    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"bssid=%s,ssid=%s,rssi=%d,phyrate=%d,noise=%d,Band=%s\n",stats->sta_BSSID,stats->sta_SSID,(int)stats->sta_RSSI,(int)stats->sta_PhyRate,(int)stats->sta_Noise,stats->sta_BAND);
+exit:
+    pthread_mutex_unlock(&wpa_sup_lock);
+    return;
+}
+
 INT parse_scan_results(char *buf, size_t len)
 {
     uint32_t count = 0;
@@ -528,15 +692,7 @@ INT parse_scan_results(char *buf, size_t len)
         memset(ap_list[count].ap_EncryptionMode, 0, sizeof(ap_list[count].ap_EncryptionMode));
         encrypt_ptr=ap_list[count].ap_EncryptionMode;
         security_ptr=ap_list[count].ap_SecurityModeEnabled;
-        int len = sizeof(wifi_securityModes)/sizeof(wifi_securityModes[0]);
-        for(i = 0; i < len; i++)
-        {
-            if(NULL != strcasestr(flags,wifi_securityModes[i].apSecurityEncryptionString)) {
-                strcpy(security_ptr, wifi_securityModes[i].modeString);
-                strcpy(encrypt_ptr, wifi_securityModes[i].encryptionString);
-                break;
-            }
-        }
+        get_security_mode_and_encryption_type(flags, security_ptr, encrypt_ptr);
         if (encrypt_ptr > ap_list[count].ap_EncryptionMode) {
             *(encrypt_ptr-1)='\0';
         }
