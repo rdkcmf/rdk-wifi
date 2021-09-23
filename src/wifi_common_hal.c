@@ -339,9 +339,9 @@ INT wifi_init() {
    system("/etc/init.d/wpa_supplicant.service restart");
 #endif
 
-    /* Starting wpa_supplicant may take some time, try 45 times before giving up */
+    /* Starting wpa_supplicant may take some time, try 75 times before giving up */
     retry = 0;    
-    while (retry++ < 45) {
+    while (retry++ < 75) {
         g_wpa_ctrl = wpa_ctrl_open(WPA_SUP_CTRL);
         if (g_wpa_ctrl != NULL) break;
         RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"ctrl_open returned NULL \n");
