@@ -335,7 +335,7 @@ typedef enum
     WIFI_SECURITY_WPA3_PSK_AES,           //!< WPA3(Pre-Shared Key) with AES encryption
     WIFI_SECURITY_WPA3_SAE,               //!< WPA3 with SAE encryption
 
-    WIFI_SECURITY_NOT_SUPPORTED = 15,     //!< Security mode not supported
+    WIFI_SECURITY_NOT_SUPPORTED = 99,     //!< Security mode not supported
 } wifiSecurityMode_t;
 
 /**********************************************************************
