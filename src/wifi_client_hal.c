@@ -515,11 +515,7 @@ void monitor_thread_task(void *param)
                     postAssocBackOffTime = pstRoamingCtrl.postAssnBackOffTime; // Connection state changed, Refresh backoff
                     backOffRefreshed = 1;
 #endif
-                    // variable just to hold "last_disconnected_ssid" in double quotes as this is what was passed into disconnect callback earlier
-                    // TODO: clean this up; check if not double quoting will cause issues
-                    char last_disconnected_ssid_with_quotes[MAX_SSID_LEN+2+1] = {0};
-                    snprintf (last_disconnected_ssid_with_quotes, sizeof(last_disconnected_ssid_with_quotes), "\"%s\"", last_disconnected_ssid);
-                    if (callback_disconnect) (*callback_disconnect)(1, last_disconnected_ssid_with_quotes, &connError);
+                    if (callback_disconnect) (*callback_disconnect)(1, last_disconnected_ssid, &connError);
                 }
 
                 else if (strstr (start, WPA_EVENT_TEMP_DISABLED) != NULL) {
@@ -626,11 +622,7 @@ void monitor_thread_task(void *param)
                         }
                     }
 
-                    // variable just to hold "ssid_to_find" in double quotes as this is what was passed into disconnect callback earlier
-                    // TODO: clean this up; check if not double quoting will cause issues
-                    char ssid_to_find_with_quotes[MAX_SSID_LEN+2+1] = {0};
-                    snprintf (ssid_to_find_with_quotes, sizeof(ssid_to_find_with_quotes), "\"%s\"", ssid_to_find);
-                    if (callback_disconnect) (*callback_disconnect)(1, ssid_to_find_with_quotes, &connError);
+                    if (callback_disconnect) (*callback_disconnect)(1, ssid_to_find, &connError);
                 } /* WPA_EVENT_NETWORK_NOT_FOUND */
 #ifdef WIFI_CLIENT_ROAMING
                else if((strstr(start, WPA_EVENT_SIGNAL_CHANGE) != NULL) && isPrivateSSID) {
