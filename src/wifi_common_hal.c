@@ -19,6 +19,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <net/if.h>
 #include <signal.h>
 #include <unistd.h>
 #include <wifi_common_hal.h>
@@ -29,6 +31,7 @@
 #define MAX_SSID_LEN        32           /* Maximum SSID name */
 #define MAX_VERSION_LEN     16          /* Maximum Version Len */
 #define BUFF_LEN_1024       1024
+#define WIFI_DEFAULT_INTERFACE "wlan0"
 extern BOOL bNoAutoScan;
 
 ULONG ssid_number_of_entries = 0;
@@ -317,6 +320,29 @@ char* readFile(char *filename)
     return buf;
 }
 
+int interface_exists(char *interface) {
+
+    int found = 0;
+    struct if_nameindex *ifp, *ifpsave;
+
+    ifpsave = ifp = if_nameindex();
+
+    if(!ifp){
+        RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"if_nameindex call failed: %s\n", strerror(errno));
+        return 0;
+    }
+    while(ifp->if_index) {
+        RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"%d %s\n", ifp->if_index, ifp->if_name);
+        if (strcmp(ifp->if_name, interface) == 0) {
+            found = 1;
+            break;
+        }
+        ifp++;
+    }
+    if_freenameindex(ifpsave);
+    return found;
+}
+
 // Initializes the wifi subsystem (all radios)
 INT wifi_init() {
     int retry = 0;
@@ -338,62 +364,69 @@ INT wifi_init() {
 #else
    system("/etc/init.d/wpa_supplicant.service restart");
 #endif
+   int x;
 
-    /* Starting wpa_supplicant may take some time, try 75 times before giving up */
-    retry = 0;    
-    while (retry++ < 75) {
-        g_wpa_ctrl = wpa_ctrl_open(WPA_SUP_CTRL);
-        if (g_wpa_ctrl != NULL) break;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"ctrl_open returned NULL \n");
-        sleep(1);
-    }
+   x = interface_exists(WIFI_DEFAULT_INTERFACE);
+   if(x)
+   {
 
-    if (g_wpa_ctrl == NULL) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_ctrl_open failed for control interface \n");
-        return RETURN_ERR;
-    }
-    g_wpa_monitor = wpa_ctrl_open(WPA_SUP_CTRL);
-    if ( g_wpa_monitor == NULL ) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_ctrl_open failed for monitor interface \n");
-        return RETURN_ERR;
-    }
+       /* Starting wpa_supplicant may take some time, try 75 times before giving up */
+       retry = 0;
+       while (retry++ < 75) {
+           g_wpa_ctrl = wpa_ctrl_open(WPA_SUP_CTRL);
+           if (g_wpa_ctrl != NULL) break;
+           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"ctrl_open returned NULL \n");
+           sleep(1);
+       }
 
-    if ( wpa_ctrl_attach(g_wpa_monitor) != 0) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_ctrl_attach failed \n");
-        return RETURN_ERR;
-    }
-    if (pthread_mutex_init(&wpa_sup_lock, NULL) != 0)
-    {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: mutex init failed\n");
-        return RETURN_ERR;
-    }
-    /* Create thread to monitor events from wpa supplicant */
-    pthread_attr_init(&thread_attr);
-    pthread_attr_setstacksize(&thread_attr, 256*1024);
-    
-    ret = pthread_create(&monitor_thread, &thread_attr, monitor_thread_task, NULL);
-    
-    
-    if (ret != 0) {        
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Monitor thread creation failed \n");
-        return RETURN_ERR;
-    }
-    // Start wpa_supplicant health monitor thread
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Starting wpa_supplicant health monitor thread \n");
-    ret = pthread_create(&wpa_health_mon_thread, NULL, monitor_wpa_health, NULL);
-    if (ret != 0) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WPA health monitor thread creation failed  \n");
-        return RETURN_ERR;
-    }
+       if (g_wpa_ctrl == NULL) {
+           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_ctrl_open failed for control interface \n");
+           return RETURN_ERR;
+       }
+       g_wpa_monitor = wpa_ctrl_open(WPA_SUP_CTRL);
+       if ( g_wpa_monitor == NULL ) {
+           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_ctrl_open failed for monitor interface \n");
+           return RETURN_ERR;
+       }
+
+       if ( wpa_ctrl_attach(g_wpa_monitor) != 0) {
+           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_ctrl_attach failed \n");
+           return RETURN_ERR;
+       }
+       if (pthread_mutex_init(&wpa_sup_lock, NULL) != 0)
+       {
+           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: mutex init failed\n");
+           return RETURN_ERR;
+       }
+       /* Create thread to monitor events from wpa supplicant */
+       pthread_attr_init(&thread_attr);
+       pthread_attr_setstacksize(&thread_attr, 256*1024);
+
+       ret = pthread_create(&monitor_thread, &thread_attr, monitor_thread_task, NULL);
+
+
+       if (ret != 0) {
+           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Monitor thread creation failed \n");
+           return RETURN_ERR;
+       }
+       // Start wpa_supplicant health monitor thread
+       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Starting wpa_supplicant health monitor thread \n");
+       ret = pthread_create(&wpa_health_mon_thread, NULL, monitor_wpa_health, NULL);
+       if (ret != 0) {
+           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WPA health monitor thread creation failed  \n");
+           return RETURN_ERR;
+       }
 #ifdef WIFI_CLIENT_ROAMING
-    // Initialize and set Roaming config params
-    initialize_roaming_config();
+       // Initialize and set Roaming config params
+       initialize_roaming_config();
 #endif
 
-    init_done=true;
+       init_done=true;
 
-    return RETURN_OK;
-    
+       return RETURN_OK;
+   }
+   else
+       return RETURN_ERR;
 }
 
 // Uninitializes wifi
