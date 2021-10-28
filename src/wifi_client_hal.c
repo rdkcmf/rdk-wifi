@@ -21,10 +21,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include "rdk_debug.h"
+#include <ctype.h>
 #include <signal.h>
 #include <wifi_client_hal.h>
 #include <unistd.h>
+#include <pthread.h>
+#include "wifi_log.h"
 #ifdef WIFI_CLIENT_ROAMING
 #include <errno.h>
 #include "cJSON.h"
@@ -43,7 +45,6 @@ typedef uint8_t u8;
 // added to be able to use wpa_supplicant's 'printf_decode' utility function to decode the SSIDs encoded by wpa_supplicant
 extern size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
 
-#define LOG_NMGR "LOG.RDK.WIFIHAL"
 #define WPA_SUP_TIMEOUT     5000         /* 5 msec */
 #define MAX_SSID_LEN        32           /* Maximum SSID name */
 #define MAX_PASSWORD_LEN    64           /* Maximum password length */
@@ -193,11 +194,12 @@ WIFI_HAL_ROAMING_MODE cur_roaming_mode = WIFI_HAL_ROAMING_MODE_AP_STEERING;
 WIFI_HAL_ROAM_STATE cur_roaming_state = WIFI_HAL_ROAM_STATE_ROAMING_IDLE;
 #endif   // WIFI_CLIENT_ROAMING
 
+INT is_null_pointer(char* str);
 
 // Parse WPS-PBC enabled access points from Scan results
 int parse_wps_pbc_accesspoints(char *buf,wifi_wps_pbc_ap_t ap_list[]);
 // Start WPS operation with Band selection
-void start_wifi_wps_connection(void *param);
+void* start_wifi_wps_connection(void *param);
 // Stop WPS operation on timeout
 void stop_wifi_wps_connection();
 // Check wether the station has dual band support
@@ -220,7 +222,7 @@ void start_wifi_signal_monitor_timer(void *arg);
 char ssid_to_find[MAX_SSID_LEN+1] = {0};
 
 /****** Helper functions ******/
-char* getValue(char *buf, char *keyword) {
+char* getValue(const char *buf, const char *keyword) {
     char *ptr = NULL;
  
     if(buf == NULL)
@@ -252,17 +254,17 @@ int wpaCtrlSendCmd(char *cmd) {
 
     memset(return_buf, 0, return_len);
     if(NULL == g_wpa_ctrl) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Control interface is NULL. \n");
+        WIFI_LOG_ERROR("Control interface is NULL. \n");
         return -1;
     }
 
     ret = wpa_ctrl_request(g_wpa_ctrl, cmd, strlen(cmd), return_buf, &return_len, NULL);
 
     if (ret == -2) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: cmd=%s timed out \n", cmd);
+        WIFI_LOG_INFO("cmd=%s timed out \n", cmd);
         return -2;
     } else if (ret < 0) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: cmd=%s failed \n", cmd);
+        WIFI_LOG_INFO("cmd=%s failed \n", cmd);
         return -1;
     }
     return 0;
@@ -274,20 +276,20 @@ static int find_ssid_in_scan_results(const char* ssid)
     int i;
     if(NULL == ssid || ssid[0] == '\0')
     {
-        RDK_LOG (RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: SSID to find is null/empty");
+        WIFI_LOG_ERROR("SSID to find is null/empty");
         return found;
     }
     for (i = 0; i < ap_count; i++)
     {
         if (strncmp (ap_list[i].ap_SSID, ssid,MAX_SSID_LEN) == 0)
         {
-            RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: Found SSID match - bssid = %s rssi = %d ssid = %s\n",
+            WIFI_LOG_INFO( "Found SSID match - bssid = %s rssi = %d ssid = %s\n",
                     ap_list[i].ap_BSSID, ap_list[i].ap_SignalStrength, ap_list[i].ap_SSID);
             found = true;
         }
         else
         {
-            RDK_LOG (RDK_LOG_TRACE1, LOG_NMGR, "WIFI_HAL: No SSID match - bssid = %s rssi = %d ssid = %s\n",
+            WIFI_LOG_TRACE("No SSID match - bssid = %s rssi = %d ssid = %s\n",
                     ap_list[i].ap_BSSID, ap_list[i].ap_SignalStrength, ap_list[i].ap_SSID);
         }
     }
@@ -297,7 +299,7 @@ static int find_ssid_in_scan_results(const char* ssid)
 /******************************/
 
 /*********Callback thread to send messages to Network Service Manager *********/
-void monitor_thread_task(void *param)
+void* monitor_thread_task(void *param)
 {
     char *start;
 
@@ -328,7 +330,7 @@ void monitor_thread_task(void *param)
 
             if (0 == wpa_ctrl_recv(g_wpa_monitor, event_buf, &event_buf_len)) {
 
-                RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR, "%s: wpa_ctrl_recv got event_buf = [%s]\n", __FUNCTION__, event_buf);
+                WIFI_LOG_DEBUG( "%s: wpa_ctrl_recv got event_buf = [%s]\n", __FUNCTION__, event_buf);
 
                 start = strchr(event_buf, '>');
                 if (start == NULL) continue;
@@ -339,11 +341,11 @@ void monitor_thread_task(void *param)
                     // does not contain explicit information on the SSID for which "scan started"
                     // so get it from previously saved info (ssid_to_find), or by other means ("GET_NETWORK 0 ssid")
 
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scan started \n");
+                    WIFI_LOG_INFO("Scan started \n");
 
                     if (!*ssid_to_find)
                     {
-                        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: ssid_to_find empty. Issuing 'GET_NETWORK 0 ssid' to get SSID being scanned for\n");
+                        WIFI_LOG_INFO("ssid_to_find empty. Issuing 'GET_NETWORK 0 ssid' to get SSID being scanned for\n");
                         pthread_mutex_lock(&wpa_sup_lock);
                         wpaCtrlSendCmd("GET_NETWORK 0 ssid");
                         const char* ptr_start_quote = strchr (return_buf, '"'); // locate quote before SSID
@@ -354,14 +356,14 @@ void monitor_thread_task(void *param)
                             strcpy (ssid_to_find, ptr_start_quote + 1);
                         }
                         pthread_mutex_unlock(&wpa_sup_lock);
-                        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: ssid based on network id = [%s] \n", return_buf);
+                        WIFI_LOG_INFO("ssid based on network id = [%s] \n", return_buf);
                     }
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: SSID to find = [%s] \n", ssid_to_find);
+                    WIFI_LOG_INFO("SSID to find = [%s] \n", ssid_to_find);
 
                     pthread_mutex_lock(&wpa_sup_lock);
 
                     /* Flush the BSS every time so that there is no stale information */
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Flushing the BSS now\n");
+                    WIFI_LOG_INFO("Flushing the BSS now\n");
                     wpaCtrlSendCmd("BSS_FLUSH 0");
 
                     cur_scan_state = WIFI_HAL_WPA_SUP_SCAN_STATE_STARTED;
@@ -369,7 +371,7 @@ void monitor_thread_task(void *param)
                 }
 
                 else if (strstr(start, WPA_EVENT_SCAN_RESULTS) != NULL) {
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scan results received \n");
+                    WIFI_LOG_INFO("Scan results received \n");
                     if (!bNoAutoScan)
                     {
                         if (*ssid_to_find)
@@ -377,20 +379,20 @@ void monitor_thread_task(void *param)
                             pthread_mutex_lock(&wpa_sup_lock);
                             return_buf[0] = '\0';
                             wpaCtrlSendCmd("SCAN_RESULTS");
-                            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Buffer Length = %d \n",strlen(return_buf));
+                            WIFI_LOG_INFO("Buffer Length = %lu \n",strlen(return_buf));
                             ap_count = parse_scan_results (return_buf, strlen (return_buf));
                             if (!find_ssid_in_scan_results (ssid_to_find))
-                                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: SSID [%s] not found in scan results\n", ssid_to_find);
+                                WIFI_LOG_ERROR("SSID [%s] not found in scan results\n", ssid_to_find);
                             pthread_mutex_unlock(&wpa_sup_lock);
                         }
                         else
                         {
-                            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: no SSID to find\n");
+                            WIFI_LOG_ERROR("no SSID to find\n");
                         }
                     }
                     else
                     {
-                        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Application is running wifi scan so skipping \n");
+                        WIFI_LOG_INFO("Application is running wifi scan so skipping \n");
                     }
                     if (cur_scan_state == WIFI_HAL_WPA_SUP_SCAN_STATE_STARTED) {
                         pthread_mutex_lock(&wpa_sup_lock);
@@ -400,27 +402,27 @@ void monitor_thread_task(void *param)
                 }
 
                 else if((strstr(start, WPS_EVENT_AP_AVAILABLE_PBC) != NULL)) {
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WPS Connection in progress\n");
+                    WIFI_LOG_INFO("WPS Connection in progress\n");
                     connError = WIFI_HAL_CONNECTING;
                     /* Trigger callback to Network Service Manager */
                     if (callback_connect) (*callback_connect)(1, current_ssid, &connError);
                 }
 
                 else if(strstr(start, WPS_EVENT_TIMEOUT) != NULL) {
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WPS Connection timeout\n");
+                    WIFI_LOG_INFO("WPS Connection timeout\n");
                     connError = WIFI_HAL_ERROR_NOT_FOUND;
                     if (callback_disconnect) (*callback_disconnect)(1, "", &connError);
                 }
                 /* Adding WPS Overlap Detection Events , This happens when an enrollee detects two registrars with PBC session
    active.*/
                 else if(strstr(start,WPS_EVENT_OVERLAP) !=  NULL) {
-                     RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: WPS Overlap detected. ! Canceling WPS Operation...\n");
+                     WIFI_LOG_ERROR("WPS Overlap detected. ! Canceling WPS Operation...\n");
                      bIsPBCOverlapDetected = TRUE;
                      // TODO - wpa_supplicant deafult behaviour is cancel wps operation so cancelling for now 
                      if(isDualBandSupported())                                          // For Xi6
                          stop_wifi_wps_connection();
                      else {                                                            // For Xi5
-                         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_PBC_OVERLAP \n");
+                         WIFI_LOG_ERROR("TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_PBC_OVERLAP \n");
                          connError = WIFI_HAL_ERROR_NOT_FOUND;
                          if (callback_disconnect) (*callback_disconnect)(1, "", &connError);
                      }
@@ -430,24 +432,27 @@ void monitor_thread_task(void *param)
                 else if(strstr(start, WPS_EVENT_SUCCESS) != NULL) {
                     bIsWpsCompleted = TRUE;
 		    bNoAutoScan = FALSE;//Setting bNoAutoScan as FALSE since WPS is successful
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WPS is successful...Associating now\n");
+                    WIFI_LOG_INFO("WPS is successful...Associating now\n");
                 }
 
                 else if(strstr(start, WPA_EVENT_CONNECTED) != NULL) {
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Authentication completed successfully and data connection enabled\n");
+                    WIFI_LOG_INFO("Authentication completed successfully and data connection enabled\n");
 
                     pthread_mutex_lock(&wpa_sup_lock);
                     /* Save the configuration */
                     if(isPrivateSSID){
                         wpaCtrlSendCmd("SAVE_CONFIG");
                         bUpdatedSSIDInfo=1;
-                        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"[%s:%d] WIFI_HAL: Configuration Saved \n",__FUNCTION__,__LINE__);
+                        WIFI_LOG_INFO("[%s:%d] Configuration Saved \n",__FUNCTION__,__LINE__);
                     }
  
                     wpaCtrlSendCmd("STATUS");
-                    snprintf (tmp_return_buf, sizeof(tmp_return_buf), "%s", return_buf);
+                    int rc = snprintf (tmp_return_buf, sizeof(tmp_return_buf), "%s", return_buf);
+                    if(rc < 0)
+                        WIFI_LOG_ERROR("snprintf of tmp_return_buf failed\n");
+
                     const char* bssid_ptr = getValue(return_buf, "bssid");
-                    char *ptr;
+                    const char *ptr;
                     if (bssid_ptr)
                     {
                         snprintf (current_bssid, sizeof(current_bssid), "%s", bssid_ptr);
@@ -455,13 +460,13 @@ void monitor_thread_task(void *param)
                     }
                     else
                     {
-                        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR, "BSSID is NULL. Status output = [%s]\n", tmp_return_buf);
+                        WIFI_LOG_ERROR( "BSSID is NULL. Status output = [%s]\n", tmp_return_buf);
                         current_bssid[0] = '\0';
                         ptr = return_buf;
                     }
                     const char *ssid_ptr = getValue(ptr, "ssid");
-                    printf_decode (current_ssid, sizeof(current_ssid), ssid_ptr ? ssid_ptr : "");
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Connected to BSSID [%s], SSID [%s]\n", current_bssid, current_ssid);
+                    printf_decode ((u8*)current_ssid, sizeof(current_ssid), ssid_ptr ? ssid_ptr : "");
+                    WIFI_LOG_INFO("Connected to BSSID [%s], SSID [%s]\n", current_bssid, current_ssid);
                     pthread_mutex_unlock(&wpa_sup_lock);
 
                     connError = WIFI_HAL_SUCCESS;
@@ -498,8 +503,8 @@ void monitor_thread_task(void *param)
                     snprintf (last_disconnected_ssid, sizeof(last_disconnected_ssid), "%s",
                             0 == strcasecmp (current_bssid, last_disconnected_bssid) ? current_ssid : "");
 
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,
-                            "WIFI_HAL: Disconnected from BSSID [%s], reason_code [%d] (SSID [%s]), last successfully connected bssid [%s]\n",
+                    WIFI_LOG_INFO(
+                            "Disconnected from BSSID [%s], reason_code [%d] (SSID [%s]), last successfully connected bssid [%s]\n",
                             last_disconnected_bssid, last_disconnected_reason_code, last_disconnected_ssid, current_bssid);
 
                     // set current BSSID and SSID to empty as we just disconnected
@@ -536,7 +541,7 @@ void monitor_thread_task(void *param)
                     if (ptr_start_quote && (ptr_end_quote = strrchr (ptr_start_quote, '"')) > ptr_start_quote)
                     {
                         *ptr_end_quote = '\0'; // replace quote after SSID with '\0' so printf_decode can work
-                        printf_decode (ssid, sizeof(ssid), ptr_start_quote + 1);
+                        printf_decode ((u8*)ssid, sizeof(ssid), ptr_start_quote + 1);
                         *ptr_end_quote = '"'; // put back the quote after SSID so search for other fields can work
 
                         // search for other fields after ssid field
@@ -554,13 +559,13 @@ void monitor_thread_task(void *param)
 
                         if (0 == strcmp (reason, "WRONG_KEY")) {
                             connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
-                            RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: Connection failed due to invalid credential, Disconnecting...\n");
+                            WIFI_LOG_INFO( "Connection failed due to invalid credential, Disconnecting...\n");
                             wpaCtrlSendCmd("DISCONNECT");
                         } else if (0 == strcmp (reason, "AUTH_FAILED"))
                             connError = WIFI_HAL_ERROR_AUTH_FAILED;
                     }
 
-                    RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: SSID [%s] disabled for %ds (auth_failures=%d), reason=%s, connError [%d]\n",
+                    WIFI_LOG_INFO( "SSID [%s] disabled for %ds (auth_failures=%d), reason=%s, connError [%d]\n",
                             ssid, duration, auth_failures, reason, connError);
 
                     (*callback_connect) (1, ssid, &connError);
@@ -579,11 +584,11 @@ void monitor_thread_task(void *param)
                     if (ptr_start_quote && (ptr_end_quote = strrchr (ptr_start_quote, '"')) > ptr_start_quote)
                     {
                         *ptr_end_quote = '\0'; // replace quote after SSID with '\0' so printf_decode can work
-                        printf_decode (ssid, sizeof(ssid), ptr_start_quote + 1);
+                        printf_decode ((u8*)ssid, sizeof(ssid), ptr_start_quote + 1);
                         *ptr_end_quote = '"'; // put back the quote after SSID so search for other fields can work
                     }
 
-                    RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: SSID [%s] re-enabled\n", ssid);
+                    WIFI_LOG_INFO( "SSID [%s] re-enabled\n", ssid);
                 }
 
                 else if((strstr(start, WPA_EVENT_NETWORK_NOT_FOUND) != NULL)&&(!bNoAutoScan)) {
@@ -596,7 +601,7 @@ void monitor_thread_task(void *param)
                     // does not contain explicit information on the SSID that was "not found"
                     // but the SSID that was "not found" is the SSID that was last scanned for (for which we got the last WPA_EVENT_SCAN_STARTED)
 
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: SSID [%s] not found in last scan\n", ssid_to_find);
+                    WIFI_LOG_INFO("SSID [%s] not found in last scan\n", ssid_to_find);
                     connError = WIFI_HAL_ERROR_NOT_FOUND;
 
                     // extra logic to check if an SSID change is the cause of the "network not found"
@@ -610,13 +615,13 @@ void monitor_thread_task(void *param)
                             pthread_mutex_lock(&wpa_sup_lock);
                             snprintf(cmd_buf, sizeof(cmd_buf), "BSS %s", last_disconnected_bssid);
                             wpaCtrlSendCmd(cmd_buf);
-                            RDK_LOG( RDK_LOG_TRACE1, LOG_NMGR,"WIFI_HAL: cmd_buf = [%s], return_buf = [%s]\n", cmd_buf, return_buf);
+                            WIFI_LOG_TRACE("cmd_buf = [%s], return_buf = [%s]\n", cmd_buf, return_buf);
                             if (*return_buf) {
-                                RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: BSSID [%s] had an SSID change\n", last_disconnected_bssid);
+                                WIFI_LOG_INFO("BSSID [%s] had an SSID change\n", last_disconnected_bssid);
                                 connError = WIFI_HAL_ERROR_SSID_CHANGED;
                             }
                             else {
-                                RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: BSSID [%s] is down or not within range\n", last_disconnected_bssid);
+                                WIFI_LOG_INFO("BSSID [%s] is down or not within range\n", last_disconnected_bssid);
                             }
                             pthread_mutex_unlock(&wpa_sup_lock);
                         }
@@ -630,7 +635,7 @@ void monitor_thread_task(void *param)
                    // Sample Event : <3>CTRL-EVENT-SIGNAL-CHANGE above=1 signal=-15 noise=-110 txrate=6000
                    //                <3>CTRL-EVENT-SIGNAL-CHANGE above=0 signal=-68 noise=-110 txrate=6000
                    // TODO :- Check if associated, Check state is connected
-                   RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: RSSI Change event detected, Event = %s \n",start);
+                   WIFI_LOG_DEBUG("RSSI Change event detected, Event = %s \n",start);
                    // Check If Roaming is enabled or not
                    if(pstRoamingCtrl.roamingEnable == true) {
                        int rssi=0,isAbove=0,readCount=0;
@@ -638,7 +643,7 @@ void monitor_thread_task(void *param)
                        char *eventData = strstr(start," ");
                        readCount = sscanf(eventData," above=%d signal=%d",&isAbove,&rssi);
                        if(readCount == 2) {
-                           RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Signal Change event received with RSSI=[%d] and isAbove=[%d] \n",rssi,isAbove);
+                           WIFI_LOG_DEBUG("Signal Change event received with RSSI=[%d] and isAbove=[%d] \n",rssi,isAbove);
                            if(isAbove == 0 && cur_roaming_state == WIFI_HAL_ROAM_STATE_ROAMING_IDLE) { // RSSI is below threshold , Trigger romaing timer
                                cur_roaming_state = WIFI_HAL_ROAM_STATE_SIGNAL_PROCESSING;
                                int time = 0;
@@ -648,24 +653,24 @@ void monitor_thread_task(void *param)
                                    time = pstRoamingCtrl.postAssnAPctrlTimeframe;
                                pthread_create(&wifi_signal_mon_thread,NULL,start_wifi_signal_monitor_timer, (void*)time);
                             } else if(isAbove == 1 && cur_roaming_state == WIFI_HAL_ROAM_STATE_THRESHOLD_TIMER_STARTED){
-                               RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Signal strength is recovered, Stopping Roaming timer.\n");
+                               WIFI_LOG_INFO("Signal strength is recovered, Stopping Roaming timer.\n");
                                postAssocBackOffTime = pstRoamingCtrl.postAssnBackOffTime; // Roaming Disabled, Refresh backoff
                                backOffRefreshed = 1;
                                pthread_cond_signal(&cond); 
                             } else if(cur_roaming_state != WIFI_HAL_ROAM_STATE_ROAMING_IDLE){
-                                RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Roaming is in progres, Skipping signal change event \n");
+                                WIFI_LOG_DEBUG("Roaming is in progres, Skipping signal change event \n");
                             }
                        } else {
-                           RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to parse signal change event. \n");
+                           WIFI_LOG_ERROR("Failed to parse signal change event. \n");
                        }
                    }
                    else {
-                       RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Skipping signal change event, Roaming is disabled.\n");
+                       WIFI_LOG_DEBUG("Skipping signal change event, Roaming is disabled.\n");
                    }
                }
                else if((strstr(start, RRM_EVENT_NEIGHBOR_REP_RXED) != NULL))
                {
-                   RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: RRM Neighbor report received event\n");
+                   WIFI_LOG_INFO("RRM Neighbor report received event\n");
                    if(pstRoamingCtrl.roamingEnable && pstRoamingCtrl.roam80211kvrEnable) {
                        cur_roaming_mode = WIFI_HAL_ROAMING_MODE_AP_STEERING; 
                        int ret = parse_neighbor_report_response(start,&stRrmNeighborRpt);
@@ -674,20 +679,20 @@ void monitor_thread_task(void *param)
                        else 
                           cur_rrm_nbr_rep_state = WIFI_HAL_RRM_NEIGHBOR_REP_RECEIVED;
                    } else {
-                       RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: RRM Skipping neighbor report, Roaming/KVR is disabled.\n");
+                       WIFI_LOG_DEBUG("RRM Skipping neighbor report, Roaming/KVR is disabled.\n");
                    }
               } else if ((strstr(start, RRM_EVENT_NEIGHBOR_REP_FAILED) != NULL)) {
-                  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: RRM Neighbor report failed event. \n");
+                  WIFI_LOG_INFO("RRM Neighbor report failed event. \n");
                   cur_rrm_nbr_rep_state = WIFI_HAL_RRM_NEIGHBOR_REP_REQUEST_FAILED;
               }
               else if(strstr(start,WPA_EVENT_BEACON_LOSS) != NULL)
               {
-                  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Beacon Loss event detected. Client may disconnect.\n");
+                  WIFI_LOG_INFO("Beacon Loss event detected. Client may disconnect.\n");
               } else if(strstr(start,"WNM-BTM-REQ-RECEIVED") != NULL)
               {
-                  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WNM- BTM Request Received. \n");
+                  WIFI_LOG_INFO("WNM- BTM Request Received. \n");
               } else if(strstr(start,"WNM-BTM-RES-SENT") != NULL) {
-                 RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WNM- BTM Response Sent. \n");
+                 WIFI_LOG_INFO("WNM- BTM Response Sent. \n");
                  cur_roaming_mode = WIFI_HAL_ROAMING_MODE_AP_STEERING;
               }
 #endif  // WIFI_CLIENT_ROAMING
@@ -700,6 +705,7 @@ void monitor_thread_task(void *param)
             usleep(WPA_SUP_TIMEOUT);
         }
     } /* End while loop */
+    return NULL;
 } /* End monitor_thread function */
 
 
@@ -708,29 +714,29 @@ void monitor_thread_task(void *param)
 /**************************************************************************************************/
 
 INT wifi_getCliWpsEnable(INT ssidIndex, BOOL *output_bool){
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex);
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex);
   return RETURN_OK;
 }
 
 INT wifi_setCliWpsEnable(INT ssidIndex, BOOL enableValue){
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex);
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex);
   return RETURN_OK;
 }
 
 INT wifi_getCliWpsDevicePIN(INT ssidIndex, ULONG *output_ulong){ //Where does the PIN come from?
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex);
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex);
   return RETURN_OK;
 }
 
 INT wifi_setCliWpsDevicePIN(INT ssidIndex, ULONG pin){
 #if 0  
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"SSID Index is not applicable here since this is a STA.. Printing SSID:%d\n", ssidIndex);
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID:%d\n", ssidIndex);
   uint32_t wps_pin = 0;
   if(NetAppWiFiGenerateWPSPin(hNetApp, &wps_pin) == NETAPP_SUCCESS){      //Trying to generate the pin and checking if the result is a success
     pin = wps_pin;
     return RETURN_OK;
   }
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Error setting the device pin\n");
+  WIFI_LOG_INFO("Error setting the device pin\n");
   return RETURN_ERR; 
 #endif
 return RETURN_OK;
@@ -738,12 +744,12 @@ return RETURN_OK;
 
 INT wifi_getCliWpsConfigMethodsSupported(INT ssidIndex, CHAR *methods){
   
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
   //Return all the methods: Push and Pin
  
   if (!is_null_pointer(methods)){
     strcpy(methods, "Push and Pin");
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Supported Methods: Push and Pin\n");
+    WIFI_LOG_INFO("Supported Methods: Push and Pin\n");
     return RETURN_OK;
   }
   return RETURN_ERR;
@@ -751,7 +757,7 @@ INT wifi_getCliWpsConfigMethodsSupported(INT ssidIndex, CHAR *methods){
 
 INT wifi_getCliWpsConfigMethodsEnabled(INT ssidIndex, CHAR *output_string){
   
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
   //I think returning push and pin for this would be acceptable
   if (!is_null_pointer(output_string)){
     strcpy(output_string, "Push and Pull");
@@ -762,10 +768,10 @@ INT wifi_getCliWpsConfigMethodsEnabled(INT ssidIndex, CHAR *output_string){
 
 INT wifi_setCliWpsConfigMethodsEnabled(INT ssidIndex, CHAR *methodString){
  
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
   if (!is_null_pointer(methodString)){
     strcpy(methodString, "Push and Pin");
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Supported Methods: Push and Pin\n");
+    WIFI_LOG_INFO("Supported Methods: Push and Pin\n");
     return RETURN_OK;
   }
   return RETURN_ERR;
@@ -773,7 +779,7 @@ INT wifi_setCliWpsConfigMethodsEnabled(INT ssidIndex, CHAR *methodString){
 
 INT wifi_getCliWpsConfigurationState(INT ssidIndex, CHAR *output_string){
  
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
   return RETURN_OK;
 }
 
@@ -782,11 +788,11 @@ INT wifi_setCliWpsEnrolleePin(INT ssidIndex, CHAR *EnrolleePin){
  #if 0
   INT* pinValue = 0;
   *pinValue = atoi(EnrolleePin);
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex);
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex);
   if(NetAppWiFiConnectByPin(hNetApp, NETAPP_IFACE_WIRELESS, NULL, *pinValue, true) == NETAPP_SUCCESS){   //Connecting to the device using a pin and checking the result
     return RETURN_OK;
   }
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Error connecting to device with enrollee pin... Check again\n");
+  WIFI_LOG_INFO("Error connecting to device with enrollee pin... Check again\n");
   return RETURN_ERR;
 #endif 
 return RETURN_OK; 
@@ -826,7 +832,7 @@ int parse_wps_pbc_accesspoints(char *buf,wifi_wps_pbc_ap_t ap_list[])
             sscanf(line,"%32s %5s %7s %*s %32s",bssid,freq,rssi,ssid);
             if((ssid[0] != '\0') && (bssid[0] != '\0') && (rssi[0] != '\0') && (freq[0] != '\0'))
             {
-                RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WPS-PBC AccessPoint[%d] : [SSID = %s , BSSID = %s , FREQ = %s , RSSI = %s ]\n",apCount,ssid,bssid,freq,rssi);
+                WIFI_LOG_INFO("WPS-PBC AccessPoint[%d] : [SSID = %s , BSSID = %s , FREQ = %s , RSSI = %s ]\n",apCount,ssid,bssid,freq,rssi);
                 strncpy(ap_list[apCount].ap_BSSID,bssid,sizeof(ap_list[apCount].ap_BSSID));
                 strncpy(ap_list[apCount].ap_SSID,ssid,sizeof(ap_list[apCount].ap_SSID));
                 ap_list[apCount].ap_Frequency = (int) strtol(freq,&eptr,10);
@@ -853,7 +859,7 @@ INT wifi_cancelWpsPairing ()
     }
     else
     {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: No In-Progress WPS Operation, Skipping WPS_CANCEL. \n");
+        WIFI_LOG_INFO("No In-Progress WPS Operation, Skipping WPS_CANCEL. \n");
     }
     return retStatus;
 }
@@ -865,7 +871,7 @@ void stop_wifi_wps_connection()
     bNoAutoScan = FALSE;//Setting bNoAutoScan as FALSE since WPS fails
     if(bIsWpsCompleted == FALSE)
     {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Stopping  WPS operation.. \n");
+        WIFI_LOG_INFO("Stopping  WPS operation.. \n");
         if(isDualBandSupported())
             pthread_cancel(wps_start_thread); // Lets forcefully stop the thread as we need to strictly maintain WPS time frame
 
@@ -886,9 +892,9 @@ void stop_wifi_wps_connection()
         connError = WIFI_HAL_ERROR_NOT_FOUND; 
         if (callback_disconnect) (*callback_disconnect)(1, "", &connError);
         if(bIsPBCOverlapDetected == TRUE)
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_PBC_OVERLAP\n");
+            WIFI_LOG_INFO("TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_PBC_OVERLAP\n");
         else
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_TIME_OUT\n");
+            WIFI_LOG_INFO("TELEMETRY_WPS_CONNECTION_STATUS:DISCONNECTED,WPS_TIME_OUT\n");
         bIsWpsCompleted = TRUE;
     }
 }
@@ -924,7 +930,7 @@ BOOL isDualBandSupported()
     }
     else
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: isDualBandSupported() : popen() failed \n");
+        WIFI_LOG_ERROR("isDualBandSupported() : popen() failed \n");
     }
     return retStatus;
 }
@@ -939,20 +945,20 @@ int triggerWpsPush(char *bssid)
     {
         memset(cmd,0,sizeof(cmd));
         snprintf(cmd,32,"WPS_PBC %s",bssid);
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Initiating WPS connection to BSSID - %s \n",bssid );
+        WIFI_LOG_INFO("Initiating WPS connection to BSSID - %s \n",bssid );
         pthread_mutex_lock(&wpa_sup_lock);
         retStatus = wpaCtrlSendCmd(cmd);
         pthread_mutex_unlock(&wpa_sup_lock);
     }
     else
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: triggerWpsPush() failed , BSSID is NULL.! \n");
+        WIFI_LOG_ERROR("triggerWpsPush() failed , BSSID is NULL.! \n");
     }
     return retStatus;
 }
 
 // Start WPS operation with Band selection.
-void start_wifi_wps_connection(void *param)
+void* start_wifi_wps_connection(void *param)
 {
     int apCount = 0;
     int i = 0;
@@ -963,7 +969,7 @@ void start_wifi_wps_connection(void *param)
     bIsPBCOverlapDetected = FALSE;
 
     // Continue scanning & try connecting Until WPS is successfull
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scanning for WPS-PBC access points on both 5 & 2.4 GHz Bands.\n");
+    WIFI_LOG_INFO("Scanning for WPS-PBC access points on both 5 & 2.4 GHz Bands.\n");
     while(!bIsWpsCompleted) 
     {
         pthread_mutex_lock(&wpa_sup_lock);
@@ -973,7 +979,7 @@ void start_wifi_wps_connection(void *param)
 
         // Check if scanning is failed due to in progress scanning
         if (strstr(return_buf, "FAIL-BUSY") != NULL) {
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: FAIL-BUSY due to in-progress scanning..  \n");
+            WIFI_LOG_INFO("FAIL-BUSY due to in-progress scanning..  \n");
             wpaCtrlSendCmd("ABORT_SCAN");      
             wpaCtrlSendCmd("BSS_FLUSH 0");
             wpaCtrlSendCmd("SCAN");
@@ -999,7 +1005,7 @@ void start_wifi_wps_connection(void *param)
         if(apCount != 0)
         {
             // Trying to get 5Ghz PBC enabled Accesspoints from scnaned list and start wps operation
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Trying to establish WPS connection to 5GHz Accesspoint.\n");
+            WIFI_LOG_INFO("Trying to establish WPS connection to 5GHz Accesspoint.\n");
             for(i=0; i<apCount; i++)
             {
                 if(ap_list[i].ap_FreqBand == WIFI_HAL_FREQ_BAND_5GHZ)
@@ -1012,17 +1018,17 @@ void start_wifi_wps_connection(void *param)
                         usleep(5000);
                     }
                     if(!bIsWpsCompleted) 
-                       RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to connect to 5G AP - %s\n",ap_list[i].ap_SSID);
+                       WIFI_LOG_ERROR("Failed to connect to 5G AP - %s\n",ap_list[i].ap_SSID);
                     else {
                        // Adding Telemetry for Successful connection
-                       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:CONNECTED,%s,%s,5GHz,%d,%d \n",ap_list[i].ap_SSID,ap_list[i].ap_BSSID,ap_list[i].ap_SignalStrength,ap_list[i].ap_Frequency);
-                       return ;
+                       WIFI_LOG_INFO("TELEMETRY_WPS_CONNECTION_STATUS:CONNECTED,%s,%s,5GHz,%d,%d \n",ap_list[i].ap_SSID,ap_list[i].ap_BSSID,ap_list[i].ap_SignalStrength,ap_list[i].ap_Frequency);
+                       return NULL;
                     }
                 }
             }
 
             // Looks like either we couldnt get a 5G AP or we couldnt connected to 5G AP. Lets try to connect to 2.4 G AP
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Failed to get 5Ghz AP for WPS connection, Trying for 2.4GHz AP. \n");
+            WIFI_LOG_INFO("Failed to get 5Ghz AP for WPS connection, Trying for 2.4GHz AP. \n");
             for(i=0; i<apCount; i++)
             {
                 if(ap_list[i].ap_FreqBand == WIFI_HAL_FREQ_BAND_24GHZ)
@@ -1035,35 +1041,34 @@ void start_wifi_wps_connection(void *param)
                         usleep(5000);
                     }
                     if(!bIsWpsCompleted) // WPS connection is failed to 2.4GHz AP, 
-                        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to connect to 2.4G AP - %s\n",ap_list[i].ap_SSID);
+                        WIFI_LOG_ERROR("Failed to connect to 2.4G AP - %s\n",ap_list[i].ap_SSID);
                     else {
                         // Adding Telemetry for Successful Connection
-                        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"TELEMETRY_WPS_CONNECTION_STATUS:CONNECTED,%s,%s,2.4GHz,%d,%d \n",ap_list[i].ap_SSID,ap_list[i].ap_BSSID,ap_list[i].ap_SignalStrength,ap_list[i].ap_Frequency);
-                        return;
+                        WIFI_LOG_INFO("TELEMETRY_WPS_CONNECTION_STATUS:CONNECTED,%s,%s,2.4GHz,%d,%d \n",ap_list[i].ap_SSID,ap_list[i].ap_BSSID,ap_list[i].ap_SignalStrength,ap_list[i].ap_Frequency);
+                        return NULL;
                     }
                 }
             }
         } // End Of if(apCount != 0)
         else
         {
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Missing WPS_PBC AP in Scanned list, Continue Scanning...  \n");
+            WIFI_LOG_INFO("Missing WPS_PBC AP in Scanned list, Continue Scanning...  \n");
         }
     } // End of while(!bIsWpsCompleted)
+    return NULL;
 }
 
 INT wifi_setCliWpsButtonPush(INT ssidIndex){
  
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
   
-  size_t return_len=sizeof(return_buf)-1;                                                                /* Return length of the buffer */
-  
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WPS Push Button Call\n");
+  WIFI_LOG_INFO("WPS Push Button Call\n");
   
   pthread_mutex_lock(&wpa_sup_lock);
   
   if (cur_sup_state != WIFI_HAL_WPA_SUP_STATE_IDLE) {
         pthread_mutex_unlock(&wpa_sup_lock);
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Connection is in progress, returning error \n");
+        WIFI_LOG_INFO("Connection is in progress, returning error \n");
         return RETURN_ERR;
   }
 
@@ -1075,7 +1080,7 @@ INT wifi_setCliWpsButtonPush(INT ssidIndex){
  
   if(isDualBandSupported())
  {
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: STB is Dual-Band supported. Initiating band seletion... \n");
+      WIFI_LOG_INFO("STB is Dual-Band supported. Initiating band seletion... \n");
       pthread_create(&wps_start_thread, NULL, start_wifi_wps_connection, NULL);
       // Start WPS timer
       signal(SIGALRM, stop_wifi_wps_connection);
@@ -1083,25 +1088,25 @@ INT wifi_setCliWpsButtonPush(INT ssidIndex){
   }   
   else
   {
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: No Dual-Band support. Initiate Normal PBC.\n");
+      WIFI_LOG_INFO("No Dual-Band support. Initiate Normal PBC.\n");
       bIsWpsCompleted = FALSE;
       pthread_mutex_lock(&wpa_sup_lock);
       wpaCtrlSendCmd("WPS_PBC");
       pthread_mutex_unlock(&wpa_sup_lock);
   }
 
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Will be timing out if AP not found after 120 seconds\n");
+  WIFI_LOG_INFO("Will be timing out if AP not found after 120 seconds\n");
 
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Deleting conf file and making a new one\n");
+  WIFI_LOG_INFO("Deleting conf file and making a new one\n");
 
   if(remove("/opt/secure/wifi/wpa_supplicant.conf") == 0){
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Removed File\n");
+    WIFI_LOG_INFO("Removed File\n");
   }
 
   FILE* fp;
   fp = fopen("/opt/secure/wifi/wpa_supplicant.conf", "w");
   if(fp == NULL){
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Error in opening configuration file\n");
+    WIFI_LOG_INFO("Error in opening configuration file\n");
     return RETURN_ERR;
   }
   fprintf(fp, "ctrl_interface=/var/run/wpa_supplicant\n");
@@ -1111,36 +1116,36 @@ INT wifi_setCliWpsButtonPush(INT ssidIndex){
   wifiStatusCode_t connError;
   connError = WIFI_HAL_CONNECTING;
   (*callback_connect)(1, "", &connError);
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Connection in progress..\n");
+  WIFI_LOG_INFO("Connection in progress..\n");
    
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI HAL: WPS Push sent successfully\n");
+  WIFI_LOG_INFO("WIFI HAL: WPS Push sent successfully\n");
   return RETURN_OK;
 }
 
 INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_security_mode, CHAR *AP_security_WEPKey, CHAR *AP_security_PreSharedKey, CHAR *AP_security_KeyPassphrase,int saveSSID,CHAR * eapIdentity,CHAR * carootcert,CHAR * clientcert,CHAR * privatekey){
   
   int retStatus = -1;
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex);
+  WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex);
   
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Save SSID value:%d\n", saveSSID);
+  WIFI_LOG_INFO("Save SSID value:%d\n", saveSSID);
 
   pthread_mutex_lock(&wpa_sup_lock);          /* Locking in the mutex before connect */
   isPrivateSSID=saveSSID;
   if (isPrivateSSID) {
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Will save network to wpa_supplicant.conf if connect is successful\n");
+      WIFI_LOG_INFO("Will save network to wpa_supplicant.conf if connect is successful\n");
   }
   else { // LnF SSID
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Will not save network to wpa_supplicant.conf\n");
+      WIFI_LOG_INFO("Will not save network to wpa_supplicant.conf\n");
   }
 
 
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Requesting connection to AP\n");
+  WIFI_LOG_INFO("Requesting connection to AP\n");
   
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL:Security mode:%d\n", AP_security_mode);
+  WIFI_LOG_INFO("Security mode:%d\n", AP_security_mode);
   retStatus=wpaCtrlSendCmd("REMOVE_NETWORK 0");
   if ((strstr (return_buf, "FAIL") != NULL) || (retStatus != 0))
   {
-      RDK_LOG (RDK_LOG_ERROR, LOG_NMGR, "WIFI_HAL: %s: REMOVE_NETWORK 0 failed error %d  \n", __FUNCTION__,retStatus);
+      WIFI_LOG_ERROR( "%s: REMOVE_NETWORK 0 failed error %d  \n", __FUNCTION__,retStatus);
   }
   
   wpaCtrlSendCmd("ADD_NETWORK");
@@ -1155,7 +1160,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       AP_security_mode == WIFI_SECURITY_WPA2_PSK_TKIP ||
       AP_security_mode == WIFI_SECURITY_WPA_WPA2_PSK)
   {
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is PSK\n");
+      WIFI_LOG_INFO("Security mode is PSK\n");
       /* Authentication algorithm */
       wpaCtrlSendCmd("SET_NETWORK 0 auth_alg OPEN");
       /* Key Management */
@@ -1165,7 +1170,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       sprintf(cmd_buf, "SET_NETWORK 0 psk \"%s\"", AP_security_PreSharedKey);
       wpaCtrlSendCmd(cmd_buf);
       if(strstr(return_buf, "FAIL") != NULL){
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Password may not be falling within spec\n");
+        WIFI_LOG_INFO("Password may not be falling within spec\n");
         wifiStatusCode_t connError;
         connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
         (*callback_connect)(1, AP_SSID, &connError);
@@ -1179,7 +1184,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
   }
   else if (AP_security_mode == WIFI_SECURITY_WPA3_PSK_AES)
   {
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is WPA2/WPA3\n" );
+      WIFI_LOG_INFO("Security mode is WPA2/WPA3\n" );
       /* Frame Management */
       sprintf(cmd_buf, "SET_NETWORK 0 ieee80211w 2");
       wpaCtrlSendCmd(cmd_buf);
@@ -1190,7 +1195,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       sprintf(cmd_buf, "SET_NETWORK 0 psk \"%s\"", AP_security_PreSharedKey);
       wpaCtrlSendCmd(cmd_buf);
       if(strstr(return_buf, "FAIL") != NULL){
-          RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Password may not be falling within spec\n" );
+          WIFI_LOG_INFO("Password may not be falling within spec\n" );
           wifiStatusCode_t connError;
           connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
           (*callback_connect)(1, AP_SSID, &connError);
@@ -1204,7 +1209,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
   }
   else if (AP_security_mode == WIFI_SECURITY_WPA3_SAE)
   {
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is WPA3\n" );
+      WIFI_LOG_INFO("Security mode is WPA3\n" );
       /* Frame Management */
       sprintf(cmd_buf, "SET_NETWORK 0 ieee80211w 2");
       wpaCtrlSendCmd(cmd_buf);
@@ -1217,7 +1222,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       sprintf(cmd_buf, "SET_NETWORK 0 psk \"%s\"", AP_security_PreSharedKey);
       wpaCtrlSendCmd(cmd_buf);
       if(strstr(return_buf, "FAIL") != NULL){
-          RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Password may not be falling within spec\n" );
+          WIFI_LOG_INFO("Password may not be falling within spec\n" );
           wifiStatusCode_t connError;
           connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
           (*callback_connect)(1, AP_SSID, &connError);
@@ -1235,7 +1240,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
            AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_AES ||
            AP_security_mode == WIFI_SECURITY_WPA_WPA2_ENTERPRISE)
   {
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Security mode is WPA Enterprise\n");
+      WIFI_LOG_INFO("Security mode is WPA Enterprise\n");
       sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt WPA-EAP");
       wpaCtrlSendCmd(cmd_buf);
   }
@@ -1258,7 +1263,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       wpaCtrlSendCmd(cmd_buf);
   }
   else{
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: None\n");
+      WIFI_LOG_INFO("None\n");
       sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt NONE");
       wpaCtrlSendCmd(cmd_buf);
 //      sprintf(cmd_buf, "SET_NETWORK 0 wep_key0 \"%s\"", AP_security_KeyPassphrase);
@@ -1277,7 +1282,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       AP_security_mode == WIFI_SECURITY_WPA2_PSK_AES ||
       AP_security_mode == WIFI_SECURITY_WPA_WPA2_PSK)
   {
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Setting TKIP values\n");
+      WIFI_LOG_INFO("Setting TKIP values\n");
     
       wpaCtrlSendCmd("SET_NETWORK 0 pairwise CCMP TKIP");
           
@@ -1292,7 +1297,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       AP_security_mode == WIFI_SECURITY_WPA2_ENTERPRISE_AES ||
       AP_security_mode == WIFI_SECURITY_WPA_WPA2_ENTERPRISE)
   {
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL:EAP Identity %s\n", eapIdentity);
+      WIFI_LOG_INFO("EAP Identity %s\n", eapIdentity);
       sprintf(cmd_buf, "SET_NETWORK 0 identity \"%s\"", eapIdentity);
       
       wpaCtrlSendCmd(cmd_buf);
@@ -1300,54 +1305,54 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       wpaCtrlSendCmd("SET_NETWORK 0 eap TLS");
   }
   
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: The carootcert:%s\n", carootcert);
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: The clientcert:%s\n", clientcert);
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: The privatekey:%s\n", privatekey);
-  RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: The PSK key:%s\n", AP_security_PreSharedKey);
-  RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: The KeyP key:%s\n", AP_security_KeyPassphrase);
+  WIFI_LOG_INFO("The carootcert:%s\n", carootcert);
+  WIFI_LOG_INFO("The clientcert:%s\n", clientcert);
+  WIFI_LOG_INFO("The privatekey:%s\n", privatekey);
+  WIFI_LOG_DEBUG("The PSK key:%s\n", AP_security_PreSharedKey);
+  WIFI_LOG_DEBUG("The KeyP key:%s\n", AP_security_KeyPassphrase);
   
   /* EAP with certificates */
   if (access(carootcert, F_OK) != -1){
       
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: CA Root certificate exists\n");
+      WIFI_LOG_INFO("CA Root certificate exists\n");
       sprintf(cmd_buf, "SET_NETWORK 0 ca_cert \"%s\"", carootcert);
       wpaCtrlSendCmd(cmd_buf);
   }
 
   if (access(clientcert, F_OK) != -1){
       
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Client Certificate exists\n");
+      WIFI_LOG_INFO("Client Certificate exists\n");
       sprintf(cmd_buf, "SET_NETWORK 0 client_cert \"%s\"", clientcert);
       wpaCtrlSendCmd(cmd_buf);
   }
 
   if (access(privatekey, F_OK) != -1){
       
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Private Key exists\n");
+      WIFI_LOG_INFO("Private Key exists\n");
       sprintf(cmd_buf, "SET_NETWORK 0 private_key \"%s\"", privatekey);
       wpaCtrlSendCmd(cmd_buf);
       
       sprintf(cmd_buf, "SET_NETWORK 0 private_key_passwd \"%s\"", AP_security_KeyPassphrase);
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Command is:%s\n", cmd_buf);
+      WIFI_LOG_INFO("Command is:%s\n", cmd_buf);
       wpaCtrlSendCmd(cmd_buf);
   }
   
   wpaCtrlSendCmd("SET_NETWORK 0 mode 0");
   
   snprintf (ssid_to_find, sizeof (ssid_to_find), "%s", AP_SSID);
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Setting ssid_to_find to [%s]\n", ssid_to_find);
+  WIFI_LOG_INFO("Setting ssid_to_find to [%s]\n", ssid_to_find);
   
   wpaCtrlSendCmd("ENABLE_NETWORK 0");
   wpaCtrlSendCmd("REASSOCIATE");
   
   if(saveSSID){
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Connecting to the specified access point\n");
+    WIFI_LOG_INFO("Connecting to the specified access point\n");
     wifiStatusCode_t connError;
     connError = WIFI_HAL_CONNECTING;
     if (callback_connect) (*callback_connect)(1, AP_SSID, &connError);    
   }    
 
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Leaving WiFi Connect Endpoint function\n");
+  WIFI_LOG_INFO("Leaving WiFi Connect Endpoint function\n");
   pthread_mutex_unlock(&wpa_sup_lock);
   return RETURN_OK;
 }
@@ -1373,7 +1378,7 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
     f = fopen("/opt/secure/wifi/wpa_supplicant.conf", "r");
     if (NULL == f)
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to open wpa_supplicant.conf\n");
+        WIFI_LOG_ERROR("Failed to open wpa_supplicant.conf\n");
         return RETURN_ERR;
     }
     while (fgets(buf, sizeof(buf), f) != NULL)
@@ -1409,11 +1414,11 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
     fclose(f);
 
     if(pairedSSIDInfo->ap_ssid[0] == '\0') {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: No SSID in wpa_supplicant.conf\n");
+        WIFI_LOG_ERROR("No SSID in wpa_supplicant.conf\n");
         return RETURN_ERR;
     }
 
-    RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: ap_ssid=[%s], ap_bssid=[%s]\n",
+    WIFI_LOG_DEBUG("%s: ap_ssid=[%s], ap_bssid=[%s]\n",
             __FUNCTION__, pairedSSIDInfo->ap_ssid, pairedSSIDInfo->ap_bssid);
 
     // BSSID will be empty if wpa_supplicant.conf does not have it
@@ -1424,21 +1429,21 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
         pthread_mutex_lock(&wpa_sup_lock);
         wpaCtrlSendCmd("STATUS");
         const char* current_bssid = getValue(return_buf, "bssid");
-        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: current_bssid=[%s]\n", __FUNCTION__, current_bssid);
+        WIFI_LOG_DEBUG("%s: current_bssid=[%s]\n", __FUNCTION__, current_bssid);
         if (current_bssid)
         {
             const char *ssid_ptr = getValue((char*) (strchr(current_bssid, '\0') + 1), "ssid"); // look for ssid after end of bssid
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: ssid_ptr=[%s]\n", __FUNCTION__, ssid_ptr);
+            WIFI_LOG_DEBUG("%s: ssid_ptr=[%s]\n", __FUNCTION__, ssid_ptr);
             if (ssid_ptr)
             {
                 char current_ssid[MAX_SSID_LEN+1] = {0};
-                printf_decode (current_ssid, sizeof(current_ssid), ssid_ptr);
-                RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: current_ssid=[%s]\n", __FUNCTION__, current_ssid);
+                printf_decode ((u8*)current_ssid, sizeof(current_ssid), ssid_ptr);
+                WIFI_LOG_DEBUG("%s: current_ssid=[%s]\n", __FUNCTION__, current_ssid);
                 if (strcmp(pairedSSIDInfo->ap_ssid, current_ssid) == 0)
                 {
                     snprintf (pairedSSIDInfo->ap_bssid, sizeof(pairedSSIDInfo->ap_bssid), "%s", current_bssid);
                     snprintf (bssid, sizeof(bssid), "%s", current_bssid);
-                    RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: %s: current_ssid matches ap_ssid. ap_bssid set to [%s]\n",
+                    WIFI_LOG_DEBUG("%s: current_ssid matches ap_ssid. ap_bssid set to [%s]\n",
                             __FUNCTION__, pairedSSIDInfo->ap_bssid);
                 }
             }
@@ -1451,9 +1456,9 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
 
 INT wifi_disconnectEndpoint(INT ssidIndex, CHAR *AP_SSID){
 
- RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
+ WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
  
- RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Received request to disconnect from AP\n");
+ WIFI_LOG_INFO("Received request to disconnect from AP\n");
  
  wpaCtrlSendCmd("DISCONNECT");
  
@@ -1464,7 +1469,7 @@ INT wifi_disconnectEndpoint(INT ssidIndex, CHAR *AP_SSID){
 
 void wifi_connectEndpoint_callback_register(wifi_connectEndpoint_callback callback_proc){
 
-  RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Registering connect callback...\n");
+  WIFI_LOG_INFO("Registering connect callback...\n");
   callback_connect=callback_proc;
 
 }
@@ -1472,7 +1477,7 @@ void wifi_connectEndpoint_callback_register(wifi_connectEndpoint_callback callba
 //Callback registration function.
 void wifi_disconnectEndpoint_callback_register(wifi_disconnectEndpoint_callback callback_proc){
 
-   RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Registering disconnect callback...\n");
+   WIFI_LOG_INFO("Registering disconnect callback...\n");
    callback_disconnect=callback_proc;
 }
 
@@ -1484,13 +1489,13 @@ INT wifi_clearSSIDInfo(INT ssidIndex) {
     pthread_mutex_lock(&wpa_sup_lock);
     if (wpaCtrlSendCmd("REMOVE_NETWORK 0") == RETURN_OK) {
          if(wpaCtrlSendCmd("SAVE_CONFIG") == RETURN_OK) {
-             RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Cleared ssid info successfully. \n");
+             WIFI_LOG_INFO("Cleared ssid info successfully. \n");
              status = RETURN_OK;
          } else {
-             RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Error in saving configuration. \n ");
+             WIFI_LOG_ERROR("Error in saving configuration. \n ");
          }
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Error in removing network. \n");
+        WIFI_LOG_ERROR("Error in removing network. \n");
     } 
     pthread_mutex_unlock(&wpa_sup_lock);
     return status;
@@ -1511,9 +1516,9 @@ static int wifi_set_signal_monitor(int rssi_threshold)
     status = wpaCtrlSendCmd(cmd);
     pthread_mutex_unlock(&wpa_sup_lock);
     if(status == RETURN_OK) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully started RSSI Signal monitor.\n ");
+        WIFI_LOG_INFO("Successfully started RSSI Signal monitor.\n ");
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to start RSSI Signal monitor. !\n ");
+        WIFI_LOG_ERROR("Failed to start RSSI Signal monitor. !\n ");
     }
     return status;
 }
@@ -1531,7 +1536,7 @@ int wifi_setRoamingControl (int ssidIndex, wifi_roamingCtrl_t *pRoamingCtrlCfg)
     int refreshNeeded = 0;
 
     if(NULL == pRoamingCtrlCfg) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Input pointer is NULL \n");
+        WIFI_LOG_ERROR("Input pointer is NULL \n");
         return -1;
     }
     memset(&currentCfg,0,sizeof(currentCfg));
@@ -1546,18 +1551,18 @@ int wifi_setRoamingControl (int ssidIndex, wifi_roamingCtrl_t *pRoamingCtrlCfg)
             pthread_mutex_unlock(&wpa_sup_lock);
             refreshNeeded = true;
             if(status != 0) {
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to set roaming enable.! \n");
+                WIFI_LOG_ERROR("Failed to set roaming enable.! \n");
                 return RETURN_ERR;
             }
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set roamingEnable to %d\n", pRoamingCtrlCfg->roamingEnable);
+            WIFI_LOG_INFO("Successfully set roamingEnable to %d\n", pRoamingCtrlCfg->roamingEnable);
          } else {
-             RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for roamingEnable, Ignoring SET operation.\n");
+             WIFI_LOG_DEBUG("Trying to set same value for roamingEnable, Ignoring SET operation.\n");
          }
          pstRoamingCtrl.roamingEnable = pRoamingCtrlCfg->roamingEnable;
 
          // Check Roaming is enabled Or Not, If Not DONOT Allow to SET/GET
         /* if(pRoamingCtrlCfg->roamingEnable == 0 && currentCfg.roamingEnable == 0) {
-             RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Romaing Feature is not enabled, Ignoring SET request.!\n");
+             WIFI_LOG_ERROR("Romaing Feature is not enabled, Ignoring SET request.!\n");
              return -2;
           } */
 
@@ -1567,14 +1572,14 @@ int wifi_setRoamingControl (int ssidIndex, wifi_roamingCtrl_t *pRoamingCtrlCfg)
             status = wpaCtrlSendCmd(cmd_buf);
             pthread_mutex_unlock(&wpa_sup_lock);
             if(status != 0) {
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to set pre_assn_best_threshold_level.! \n");
+                WIFI_LOG_ERROR("Failed to set pre_assn_best_threshold_level.! \n");
                 return RETURN_ERR;
             }
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set preassnBestThreshold to %d\n", pRoamingCtrlCfg->preassnBestThreshold);
+            WIFI_LOG_INFO("Successfully set preassnBestThreshold to %d\n", pRoamingCtrlCfg->preassnBestThreshold);
          } else if(currentCfg.preassnBestThreshold == pRoamingCtrlCfg->preassnBestThreshold)
-             RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for preassnBestThreshold, Ignoring SET operation.\n");
+             WIFI_LOG_DEBUG("Trying to set same value for preassnBestThreshold, Ignoring SET operation.\n");
          else{
-             RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to set pre_assn_best_threshold_level - Invalid value = %d \n",pRoamingCtrlCfg->preassnBestThreshold);
+             WIFI_LOG_ERROR("Failed to set pre_assn_best_threshold_level - Invalid value = %d \n",pRoamingCtrlCfg->preassnBestThreshold);
              return RETURN_ERR;
          }
          pstRoamingCtrl.preassnBestThreshold = pRoamingCtrlCfg->preassnBestThreshold;
@@ -1585,12 +1590,12 @@ int wifi_setRoamingControl (int ssidIndex, wifi_roamingCtrl_t *pRoamingCtrlCfg)
             status = wpaCtrlSendCmd(cmd_buf);
             pthread_mutex_unlock(&wpa_sup_lock);
             if(status != 0) {
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to set pre_assn_best_delta_level.! \n");
+                WIFI_LOG_ERROR("Failed to set pre_assn_best_delta_level.! \n");
                 return RETURN_ERR;
             }
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set preassnBestDelta to %d\n", pRoamingCtrlCfg->preassnBestDelta);
+            WIFI_LOG_INFO("Successfully set preassnBestDelta to %d\n", pRoamingCtrlCfg->preassnBestDelta);
          } else {
-             RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for preassnBestDelta, Ignoring SET operation.\n");
+             WIFI_LOG_DEBUG("Trying to set same value for preassnBestDelta, Ignoring SET operation.\n");
          }
          pstRoamingCtrl.preassnBestDelta = pRoamingCtrlCfg->preassnBestDelta;
 
@@ -1600,9 +1605,9 @@ int wifi_setRoamingControl (int ssidIndex, wifi_roamingCtrl_t *pRoamingCtrlCfg)
             pthread_mutex_lock(&wpa_sup_lock);
             wpaCtrlSendCmd(cmd_buf);
             pthread_mutex_unlock(&wpa_sup_lock);
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set 80211kvrEnable to %d\n", pRoamingCtrlCfg->roam80211kvrEnable);
+            WIFI_LOG_INFO("Successfully set 80211kvrEnable to %d\n", pRoamingCtrlCfg->roam80211kvrEnable);
         } else {
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for 80211kvrEnable,Ignoring SET operation.\n");
+            WIFI_LOG_DEBUG("Trying to set same value for 80211kvrEnable,Ignoring SET operation.\n");
         }
         pstRoamingCtrl.roam80211kvrEnable = pRoamingCtrlCfg->roam80211kvrEnable;
 
@@ -1612,88 +1617,88 @@ int wifi_setRoamingControl (int ssidIndex, wifi_roamingCtrl_t *pRoamingCtrlCfg)
         pthread_mutex_unlock(&wpa_sup_lock);
          
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get current roaming Config \n");
+        WIFI_LOG_ERROR("Failed to get current roaming Config \n");
     }
     // Setting Post Association params
 
     if(pstRoamingCtrl.selfSteerOverride != pRoamingCtrlCfg->selfSteerOverride) {
         pstRoamingCtrl.selfSteerOverride = pRoamingCtrlCfg->selfSteerOverride;
         refreshNeeded = true;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set selfSteerOverride to %d\n", pstRoamingCtrl.selfSteerOverride);
+        WIFI_LOG_INFO("Successfully set selfSteerOverride to %d\n", pstRoamingCtrl.selfSteerOverride);
     } else {
-        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for selfSteerOverride, Ignoring SET operation.\n");
+        WIFI_LOG_DEBUG("Trying to set same value for selfSteerOverride, Ignoring SET operation.\n");
     }
     // Set Roaming Mode 
     if((pstRoamingCtrl.roam80211kvrEnable == true) && (pstRoamingCtrl.selfSteerOverride == false)) {
         cur_roaming_mode = WIFI_HAL_ROAMING_MODE_AP_STEERING;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Setting Roaming mode to AP Controlled..\n");
+        WIFI_LOG_INFO("Setting Roaming mode to AP Controlled..\n");
     }
     else {
         cur_roaming_mode = WIFI_HAL_ROAMING_MODE_SELF_STEERING;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL:Setting Roaming mode to Self Steering..\n");
+        WIFI_LOG_INFO("Setting Roaming mode to Self Steering..\n");
     }
 
     if(pstRoamingCtrl.postAssnLevelDeltaConnected != pRoamingCtrlCfg->postAssnLevelDeltaConnected) {
         pstRoamingCtrl.postAssnLevelDeltaConnected = pRoamingCtrlCfg->postAssnLevelDeltaConnected;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set postAssnLevelDeltaConnected to %d\n", pstRoamingCtrl.postAssnLevelDeltaConnected);
+        WIFI_LOG_INFO("Successfully set postAssnLevelDeltaConnected to %d\n", pstRoamingCtrl.postAssnLevelDeltaConnected);
     } else {
-        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for postAssnLevelDeltaConnected,Ignoring SET operation.\n");
+        WIFI_LOG_DEBUG("Trying to set same value for postAssnLevelDeltaConnected,Ignoring SET operation.\n");
     }
 
     if(pstRoamingCtrl.postAssnLevelDeltaDisconnected != pRoamingCtrlCfg->postAssnLevelDeltaDisconnected) {
         pstRoamingCtrl.postAssnLevelDeltaDisconnected = pRoamingCtrlCfg->postAssnLevelDeltaDisconnected;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set postAssnLevelDeltaDisconnected to %d\n", pstRoamingCtrl.postAssnLevelDeltaDisconnected);
+        WIFI_LOG_INFO("Successfully set postAssnLevelDeltaDisconnected to %d\n", pstRoamingCtrl.postAssnLevelDeltaDisconnected);
     } else {
-        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for postAssnLevelDeltaDisconnected,Ignoring SET operation.\n");
+        WIFI_LOG_DEBUG("Trying to set same value for postAssnLevelDeltaDisconnected,Ignoring SET operation.\n");
     }
 
     if(pstRoamingCtrl.postAssnSelfSteerThreshold != pRoamingCtrlCfg->postAssnSelfSteerThreshold && wifi_is_valid_threshold(pRoamingCtrlCfg->postAssnSelfSteerThreshold)) {
         pstRoamingCtrl.postAssnSelfSteerThreshold = pRoamingCtrlCfg->postAssnSelfSteerThreshold;
         refreshNeeded = true;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set postAssnSelfSteerThreshold to %d\n",pstRoamingCtrl.postAssnSelfSteerThreshold);
+        WIFI_LOG_INFO("Successfully set postAssnSelfSteerThreshold to %d\n",pstRoamingCtrl.postAssnSelfSteerThreshold);
     } else if(pstRoamingCtrl.postAssnSelfSteerThreshold == pRoamingCtrlCfg->postAssnSelfSteerThreshold) {
-        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for postAssnSelfSteerThreshold,Ignoring SET operation.\n");
+        WIFI_LOG_DEBUG("Trying to set same value for postAssnSelfSteerThreshold,Ignoring SET operation.\n");
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to set postAssnSelfSteerThreshold, Invalid Value = %d.\n",pRoamingCtrlCfg->postAssnSelfSteerThreshold);
+        WIFI_LOG_ERROR("Failed to set postAssnSelfSteerThreshold, Invalid Value = %d.\n",pRoamingCtrlCfg->postAssnSelfSteerThreshold);
     }
 
     if(pstRoamingCtrl.postAssnSelfSteerTimeframe != pRoamingCtrlCfg->postAssnSelfSteerTimeframe && pRoamingCtrlCfg->postAssnSelfSteerTimeframe >= 0) {
         pstRoamingCtrl.postAssnSelfSteerTimeframe = pRoamingCtrlCfg->postAssnSelfSteerTimeframe;
         postAssocBackOffTime = pstRoamingCtrl.postAssnBackOffTime; // Timer changed, Refresh backoff
         backOffRefreshed = 1;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set postAssnSelfSteerTimeframe to %d\n", pstRoamingCtrl.postAssnSelfSteerTimeframe);
+        WIFI_LOG_INFO("Successfully set postAssnSelfSteerTimeframe to %d\n", pstRoamingCtrl.postAssnSelfSteerTimeframe);
     } else if(pRoamingCtrlCfg->postAssnSelfSteerTimeframe < 0 ) {
-         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to set postAssnSelfSteerTimeframe, Invalid Value = %d.\n",pRoamingCtrlCfg->postAssnSelfSteerTimeframe);
+         WIFI_LOG_ERROR("Failed to set postAssnSelfSteerTimeframe, Invalid Value = %d.\n",pRoamingCtrlCfg->postAssnSelfSteerTimeframe);
     }
 
     if(pstRoamingCtrl.postAssnBackOffTime != pRoamingCtrlCfg->postAssnBackOffTime) {
         pstRoamingCtrl.postAssnBackOffTime = pRoamingCtrlCfg->postAssnBackOffTime;
         postAssocBackOffTime = pstRoamingCtrl.postAssnBackOffTime;
         backOffRefreshed = 1;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set postAssnBackOffTime to %d\n", pstRoamingCtrl.postAssnBackOffTime);
+        WIFI_LOG_INFO("Successfully set postAssnBackOffTime to %d\n", pstRoamingCtrl.postAssnBackOffTime);
     } else {
-        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for postAssnBackOffTime,Ignoring SET operation.\n");
+        WIFI_LOG_DEBUG("Trying to set same value for postAssnBackOffTime,Ignoring SET operation.\n");
     }
 
     if(pstRoamingCtrl.postAssnAPctrlThreshold != pRoamingCtrlCfg->postAssnAPctrlThreshold && wifi_is_valid_threshold(pRoamingCtrlCfg->postAssnAPctrlThreshold)) {
         pstRoamingCtrl.postAssnAPctrlThreshold = pRoamingCtrlCfg->postAssnAPctrlThreshold;
         refreshNeeded = true;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set postAssnAPctrlThreshold to %d\n", pstRoamingCtrl.postAssnAPctrlThreshold);
+        WIFI_LOG_INFO("Successfully set postAssnAPctrlThreshold to %d\n", pstRoamingCtrl.postAssnAPctrlThreshold);
     } else if(pstRoamingCtrl.postAssnAPctrlThreshold == pRoamingCtrlCfg->postAssnAPctrlThreshold) {
-        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for postAssnAPctrlThreshold,Ignoring SET operation.\n");
+        WIFI_LOG_DEBUG("Trying to set same value for postAssnAPctrlThreshold,Ignoring SET operation.\n");
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to set postAssnAPctrlThreshold, Invalid Value = %d.\n",pRoamingCtrlCfg->postAssnAPctrlThreshold);
+        WIFI_LOG_ERROR("Failed to set postAssnAPctrlThreshold, Invalid Value = %d.\n",pRoamingCtrlCfg->postAssnAPctrlThreshold);
     }
 
     if(pstRoamingCtrl.postAssnAPctrlTimeframe != pRoamingCtrlCfg->postAssnAPctrlTimeframe && pRoamingCtrlCfg->postAssnAPctrlTimeframe >= 0) {
         pstRoamingCtrl.postAssnAPctrlTimeframe = pRoamingCtrlCfg->postAssnAPctrlTimeframe;
         postAssocBackOffTime = pstRoamingCtrl.postAssnBackOffTime; // Timer changed, Refresh backoff
         backOffRefreshed = 1;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully set postAssnAPctrlTimeframe to %d\n", pstRoamingCtrl.postAssnAPctrlTimeframe);
+        WIFI_LOG_INFO("Successfully set postAssnAPctrlTimeframe to %d\n", pstRoamingCtrl.postAssnAPctrlTimeframe);
     } else if(pstRoamingCtrl.postAssnAPctrlTimeframe == pRoamingCtrlCfg->postAssnAPctrlTimeframe){
-        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Trying to set same value for postAssnAPctrlTimeframe,Ignoring SET operation.\n");
+        WIFI_LOG_DEBUG("Trying to set same value for postAssnAPctrlTimeframe,Ignoring SET operation.\n");
     } else {
-       RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to set postAssnAPctrlTimeframe, Invalid Value = %d.\n",pRoamingCtrlCfg->postAssnAPctrlTimeframe);
+       WIFI_LOG_ERROR("Failed to set postAssnAPctrlTimeframe, Invalid Value = %d.\n",pRoamingCtrlCfg->postAssnAPctrlTimeframe);
     }
 
     // Refresh Signal monitor if  threshold or roaming mode is changed
@@ -1720,7 +1725,7 @@ int wifi_setRoamingControl (int ssidIndex, wifi_roamingCtrl_t *pRoamingCtrlCfg)
     // Save to persistent storage 
     status = persist_roaming_config(&pstRoamingCtrl);
     if(status != RETURN_OK) 
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to save roaming Configuration.! \n");
+        WIFI_LOG_ERROR("Failed to save roaming Configuration.! \n");
     return status;
 }   
 
@@ -1732,7 +1737,7 @@ int persist_roaming_config(wifi_roamingCtrl_t* pRoamingCtrl_data)
     if (pRoamingCtrl_data != NULL) {
         pRoamingCtrl_Json_Data = cJSON_CreateObject();
         if(!pRoamingCtrl_Json_Data) {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to create JSON object \n");
+            WIFI_LOG_ERROR("Failed to create JSON object \n");
             return RETURN_ERR;
         }
 
@@ -1756,7 +1761,7 @@ int persist_roaming_config(wifi_roamingCtrl_t* pRoamingCtrl_data)
         cJSON_Delete(pRoamingCtrl_Json_Data);
     } else {
        retValue = -1;
-       RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Input config is NULL, failed to save roaming config \n");
+       WIFI_LOG_ERROR("Input config is NULL, failed to save roaming config \n");
     }
     return retValue;
 }
@@ -1765,10 +1770,10 @@ int wifi_getRoamingControl(INT ssidIndex, wifi_roamingCtrl_t *pRoamingCtrlCfg)
     char* ptr = NULL;
     int retStatus = RETURN_OK;
 
-    RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Entering ... (%s) \n",__FUNCTION__);
+    WIFI_LOG_DEBUG("Entering ... (%s) \n",__FUNCTION__);
 
     if(pRoamingCtrlCfg == NULL) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Input Stats is NULL \n");
+        WIFI_LOG_ERROR("Input Stats is NULL \n");
         return RETURN_ERR;
     }
     memcpy(pRoamingCtrlCfg,&pstRoamingCtrl,sizeof(wifi_roamingCtrl_t));
@@ -1779,48 +1784,48 @@ int wifi_getRoamingControl(INT ssidIndex, wifi_roamingCtrl_t *pRoamingCtrlCfg)
     {
         ptr = getValue(return_buf, "roaming_enable");
         if (ptr == NULL) {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in getting roaming_enable. \n");
+            WIFI_LOG_ERROR("Failure in getting roaming_enable. \n");
             retStatus = RETURN_ERR;
             goto exit_err;
         }
         else {
             pRoamingCtrlCfg->roamingEnable = strtol(ptr,NULL,10);
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: [%s] Roaming Enable = %d\n",__FUNCTION__,pRoamingCtrlCfg->roamingEnable);
+            WIFI_LOG_DEBUG("[%s] Roaming Enable = %d\n",__FUNCTION__,pRoamingCtrlCfg->roamingEnable);
         }
         ptr = ptr + strlen(ptr) + 1;
         ptr = getValue(ptr, "pre_assn_best_threshold_level");
         if (ptr == NULL) {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in getting pre_assn_best_threshold_level. \n");
+            WIFI_LOG_ERROR("Failure in getting pre_assn_best_threshold_level. \n");
             retStatus = RETURN_ERR;
             goto exit_err;
         }
         else {
             pRoamingCtrlCfg->preassnBestThreshold = strtol(ptr,NULL,10);
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: [%s] preassnBestThreshold  = %d\n",__FUNCTION__,pRoamingCtrlCfg->preassnBestThreshold);
+            WIFI_LOG_DEBUG("[%s] preassnBestThreshold  = %d\n",__FUNCTION__,pRoamingCtrlCfg->preassnBestThreshold);
         }
         ptr = ptr + strlen(ptr) + 1;
         ptr = getValue(ptr, "pre_assn_best_delta_level");
         if (ptr == NULL) {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in getting pre_assn_best_delta_level. \n");
+            WIFI_LOG_ERROR("Failure in getting pre_assn_best_delta_level. \n");
             retStatus = RETURN_ERR;
             goto exit_err;
         }
         else {
             pRoamingCtrlCfg->preassnBestDelta = strtol(ptr,NULL,10);
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: [%s] preassnBestDelta = %d\n",__FUNCTION__,pRoamingCtrlCfg->preassnBestDelta);
+            WIFI_LOG_DEBUG("[%s] preassnBestDelta = %d\n",__FUNCTION__,pRoamingCtrlCfg->preassnBestDelta);
         }
         ptr = ptr + strlen(ptr) + 1;
         ptr = getValue(ptr, "kvr_enable");
         if (ptr == NULL) {
             // kvr_enable is not a mandatory param, in xi5 this param will not be available , hence don't return failure.
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in getting kvr_enable. \n"); 
+            WIFI_LOG_ERROR("Failure in getting kvr_enable. \n"); 
         } else {
             pRoamingCtrlCfg->roam80211kvrEnable = strtol(ptr,NULL,10);
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: [%s] roam80211kvrEnable = %d\n",__FUNCTION__,pRoamingCtrlCfg->roam80211kvrEnable);
+            WIFI_LOG_DEBUG("[%s] roam80211kvrEnable = %d\n",__FUNCTION__,pRoamingCtrlCfg->roam80211kvrEnable);
         }
 
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: GET ROAMING_CONTROLS failed , Status = %d \n",retStatus);
+        WIFI_LOG_ERROR("GET ROAMING_CONTROLS failed , Status = %d \n",retStatus);
         retStatus = RETURN_ERR;
     }
 exit_err:
@@ -1837,7 +1842,7 @@ char* readPersistentFile(char *fileName)
         fp = fopen(fileName, "r");
         if (fp == NULL)
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to open persistent file. !\n ");
+            WIFI_LOG_ERROR("Failed to open persistent file. !\n ");
         }
         else
         {
@@ -1847,7 +1852,7 @@ char* readPersistentFile(char *fileName)
             fseek(fp, 0, SEEK_SET);
             fileContent = (char *) malloc(sizeof(char) * (ch_count + 1));
             if(fileContent == NULL) {
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to allocate memory, readPersistentFile failed.\n ");
+                WIFI_LOG_ERROR("Failed to allocate memory, readPersistentFile failed.\n ");
                 fclose(fp);
                 return fileContent;
             }
@@ -1858,7 +1863,7 @@ char* readPersistentFile(char *fileName)
     }
     else
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Missing persistent file!\n ");
+        WIFI_LOG_ERROR("Missing persistent file!\n ");
     }
     return fileContent;
 }
@@ -1868,7 +1873,7 @@ int writeToPersistentFile (char* fileName, cJSON* pRoaming_Data)
     fp = fopen(fileName, "w");
     if (fp == NULL)
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to open persistent file. !\n ");
+        WIFI_LOG_ERROR("Failed to open persistent file. !\n ");
         return -1;
     }
     else
@@ -1877,9 +1882,9 @@ int writeToPersistentFile (char* fileName, cJSON* pRoaming_Data)
         if(fileContent != NULL) {
             fprintf(fp, "%s", fileContent);
             free(fileContent);
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Persistent file saved successfully.\n ");
+            WIFI_LOG_DEBUG("Persistent file saved successfully.\n ");
         } else {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to format Json to string. !\n ");
+            WIFI_LOG_ERROR("Failed to format Json to string. !\n ");
         }
         fclose(fp);
     }
@@ -1913,7 +1918,7 @@ int initialize_roaming_config()
     pRoamingCtrl_data_file_content = readPersistentFile(WIFI_ROAMING_CONFIG_FILE);
     // check if file is empty
     if(NULL == pRoamingCtrl_data_file_content) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to read persistent file. !\n ");
+        WIFI_LOG_ERROR("Failed to read persistent file. !\n ");
     }
     if(pRoamingCtrl_data_file_content) {
         pRoamingCtrl_json = cJSON_Parse(pRoamingCtrl_data_file_content);
@@ -1921,12 +1926,12 @@ int initialize_roaming_config()
     }
      
     if(NULL == pRoamingCtrl_json) {
-         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to parse configuration file !\n ");
+         WIFI_LOG_ERROR("Failed to parse configuration file !\n ");
     }
     else {
         
         if( !(cJSON_GetObjectItem(pRoamingCtrl_json,"roamingEnable")) || !(cJSON_GetObjectItem(pRoamingCtrl_json,"preassnBestThreshold") || !(cJSON_GetObjectItem(pRoamingCtrl_json,"preassnBestDelta")))) {
-             RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Corrupted roaming values, Unable to load intial configs !\n ");
+             WIFI_LOG_ERROR("Corrupted roaming values, Unable to load intial configs !\n ");
         } else {
             pRoamingCtrl_data.roamingEnable = cJSON_GetObjectItem(pRoamingCtrl_json,"roamingEnable")->valueint;
             pRoamingCtrl_data.preassnBestThreshold = cJSON_GetObjectItem(pRoamingCtrl_json,"preassnBestThreshold")->valueint;
@@ -1963,13 +1968,13 @@ int initialize_roaming_config()
     }
 
     // Setting Initial Values
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Setting Initial Roaming Configuration :- [roamingEnable=%d,preassnBestThreshold=%d,preassnBestDelta=%d,selfSteerOverride=%d,postAssnLevelDeltaConnected=%d,postAssnSelfSteerThreshold=%d,postAssnSelfSteerTimeframe=%d,postAssnBackOffTime=%d,postAssnLevelDeltaDisconnected=%d,postAssnAPcontrolThresholdLevel=%d,postAssnAPcontrolTimeframe=%d,80211kvrEnable=%d]\n",pRoamingCtrl_data.roamingEnable,pRoamingCtrl_data.preassnBestThreshold,pRoamingCtrl_data.preassnBestDelta,pRoamingCtrl_data.selfSteerOverride,pRoamingCtrl_data.postAssnLevelDeltaConnected,pRoamingCtrl_data.postAssnSelfSteerThreshold,pRoamingCtrl_data.postAssnSelfSteerTimeframe,pRoamingCtrl_data.postAssnBackOffTime,pRoamingCtrl_data.postAssnLevelDeltaDisconnected,pRoamingCtrl_data.postAssnAPctrlThreshold,pRoamingCtrl_data.postAssnAPctrlTimeframe,pRoamingCtrl_data.roam80211kvrEnable);
+    WIFI_LOG_INFO("Setting Initial Roaming Configuration :- [roamingEnable=%d,preassnBestThreshold=%d,preassnBestDelta=%d,selfSteerOverride=%d,postAssnLevelDeltaConnected=%d,postAssnSelfSteerThreshold=%d,postAssnSelfSteerTimeframe=%d,postAssnBackOffTime=%d,postAssnLevelDeltaDisconnected=%d,postAssnAPcontrolThresholdLevel=%d,postAssnAPcontrolTimeframe=%d,80211kvrEnable=%d]\n",pRoamingCtrl_data.roamingEnable,pRoamingCtrl_data.preassnBestThreshold,pRoamingCtrl_data.preassnBestDelta,pRoamingCtrl_data.selfSteerOverride,pRoamingCtrl_data.postAssnLevelDeltaConnected,pRoamingCtrl_data.postAssnSelfSteerThreshold,pRoamingCtrl_data.postAssnSelfSteerTimeframe,pRoamingCtrl_data.postAssnBackOffTime,pRoamingCtrl_data.postAssnLevelDeltaDisconnected,pRoamingCtrl_data.postAssnAPctrlThreshold,pRoamingCtrl_data.postAssnAPctrlTimeframe,pRoamingCtrl_data.roam80211kvrEnable);
 
     wifi_setRoamingControl(ssidIndex,&pRoamingCtrl_data); 
     return RETURN_OK;
 }
 #endif
-int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbor_ap_t neighborAPList[], int timeout)
+int get_wifi_self_steer_matching_bss_list(const char* ssid_to_find,wifi_neighbor_ap_t neighborAPList[], int timeout)
 {
     char tmpBuff[RETURN_BUF_LENGTH];
     int ap_count = 0;
@@ -1977,7 +1982,7 @@ int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbor_ap_t 
     int apCnt = 0,matchCount = 0;
 
     // initiate a scan and get the list of matching BSS
-    RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: Starting scan for best Neighbor SSIDs ... \n");
+    WIFI_LOG_INFO( "Starting scan for best Neighbor SSIDs ... \n");
     bNoAutoScan = TRUE;
     pthread_mutex_lock(&wpa_sup_lock);
     wpaCtrlSendCmd("BSS_FLUSH 0");
@@ -2000,7 +2005,7 @@ int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbor_ap_t 
     for(apCnt = 0;apCnt<ap_count; apCnt++) {
 
         if ((strncmp (ap_list[apCnt].ap_SSID,ssid_to_find,MAX_SSID_LEN) == 0) && (matchCount<MAX_NEIGHBOR_LIMIT)) {
-            RDK_LOG(RDK_LOG_INFO,LOG_NMGR, "WIFI_HAL: SCAN Results Matching BSS - ssid = [%s] bssid = [%s] rssi = [%d] freq = [%s]\n",
+            WIFI_LOG_INFO("SCAN Results Matching BSS - ssid = [%s] bssid = [%s] rssi = [%d] freq = [%s]\n",
                     ap_list[apCnt].ap_SSID,ap_list[apCnt].ap_BSSID, ap_list[apCnt].ap_SignalStrength, ap_list[apCnt].ap_OperatingFrequencyBand);
             memcpy(&neighborAPList[matchCount],&ap_list[apCnt],sizeof(wifi_neighbor_ap_t));
             matchCount++;
@@ -2019,11 +2024,11 @@ static int get_best_ap_from_neighbor_list(wifi_neighbor_ap_t neighborAPList[],in
     wifi_neighbor_ap_t bestBss;
 
     if(apCount == 0) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: BSS count is 0, Failed to get best AP from neighbor list.\n");
+        WIFI_LOG_ERROR("BSS count is 0, Failed to get best AP from neighbor list.\n");
         return retStatus;
     }
     if(bestNeighbor == NULL) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Input neighbor struct is null, Failed to get best AP from neighbor list.\n");
+        WIFI_LOG_ERROR("Input neighbor struct is null, Failed to get best AP from neighbor list.\n");
         return retStatus;
     }
     memset(&bestBss,0,sizeof(wifi_neighbor_ap_t));
@@ -2034,9 +2039,9 @@ static int get_best_ap_from_neighbor_list(wifi_neighbor_ap_t neighborAPList[],in
     }
     if(bestBss.ap_SSID[0] != '\0') {
         memcpy(bestNeighbor,&bestBss,sizeof(wifi_neighbor_ap_t));
-        RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: Selecting best  BSS [%s] with RSSI [%d] . \n",bestNeighbor->ap_BSSID,bestNeighbor->ap_SignalStrength);
+        WIFI_LOG_INFO( "Selecting best  BSS [%s] with RSSI [%d] . \n",bestNeighbor->ap_BSSID,bestNeighbor->ap_SignalStrength);
     } else {
-        RDK_LOG (RDK_LOG_INFO, LOG_NMGR, "WIFI_HAL: Failed to get Best AP. !\n");
+        WIFI_LOG_INFO( "Failed to get Best AP. !\n");
     }
     return RETURN_OK;
 }
@@ -2082,7 +2087,7 @@ static int start_post_assoc_roaming(WIFI_HAL_ROAMING_MODE roamingMode)
     // Get the current stats params like ssid,bssid and rssi for current connection
     wifi_getStats(radioIndex, &currWifiStats);
     if(currWifiStats.sta_SSID[0] == '\0') {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get current SSID, Skip Roaming. \n");
+        WIFI_LOG_ERROR("Failed to get current SSID, Skip Roaming. \n");
         return retStatus;
     }
     int timeout = 6;  //6 seconds timeout
@@ -2091,11 +2096,11 @@ static int start_post_assoc_roaming(WIFI_HAL_ROAMING_MODE roamingMode)
     pthread_mutex_unlock(&wifi_roam_lock);
     bssCount = get_wifi_self_steer_matching_bss_list(currWifiStats.sta_SSID,neighborAPList,timeout);
     if(bssCount == 0) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: No Matching BSS found to Roam. \n");
+        WIFI_LOG_ERROR("No Matching BSS found to Roam. \n");
         incrementBackoff(&postAssocBackOffTime);
         return retStatus;
     }
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Got %d matching  BSS for SSID %s \n",bssCount,currWifiStats.sta_SSID);
+    WIFI_LOG_INFO("Got %d matching  BSS for SSID %s \n",bssCount,currWifiStats.sta_SSID);
 
     int status;
     int rssiThreshold;
@@ -2112,11 +2117,11 @@ static int start_post_assoc_roaming(WIFI_HAL_ROAMING_MODE roamingMode)
     status =  get_best_ap_from_neighbor_list(neighborAPList,bssCount,&bestNeighbor);
     // Check the validity of BSS
     if(status != RETURN_OK || (currWifiStats.sta_BSSID[0] == '\0') || (bestNeighbor.ap_BSSID[0] == '\0') ) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: failed to get BSSID from Best BSS.\n");
+        WIFI_LOG_ERROR("failed to get BSSID from Best BSS.\n");
         incrementBackoff(&postAssocBackOffTime);
         return retStatus;
     } else if(strncmp(currWifiStats.sta_BSSID,bestNeighbor.ap_BSSID,MAX_SSID_LEN-1) == 0) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL:WIFI_HAL: Client is already connected to Best BSS, Skipping Roaming operation.\n");
+        WIFI_LOG_ERROR("Client is already connected to Best BSS, Skipping Roaming operation.\n");
         incrementBackoff(&postAssocBackOffTime); 
         return retStatus;
     }
@@ -2127,9 +2132,9 @@ static int start_post_assoc_roaming(WIFI_HAL_ROAMING_MODE roamingMode)
         delta = pstRoamingCtrl.postAssnLevelDeltaDisconnected; // delta level disconnected
     }
     if(currWifiStats.sta_RSSI < bestNeighbor.ap_SignalStrength && ((bestNeighbor.ap_SignalStrength-(int)currWifiStats.sta_RSSI) >= delta)) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Selected [%s] as best AP for SSID [%s] with RSSI [%d]. \n",bestNeighbor.ap_BSSID,bestNeighbor.ap_SSID,bestNeighbor.ap_SignalStrength);
+        WIFI_LOG_INFO("Selected [%s] as best AP for SSID [%s] with RSSI [%d]. \n",bestNeighbor.ap_BSSID,bestNeighbor.ap_SSID,bestNeighbor.ap_SignalStrength);
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Skipping roam to %s based on RSSI delta,Current RSSI=[%d],Target RSSI=[%d],Delta=[%d] \n",bestNeighbor.ap_BSSID,(int)currWifiStats.sta_RSSI,bestNeighbor.ap_SignalStrength,delta);
+        WIFI_LOG_ERROR("Skipping roam to %s based on RSSI delta,Current RSSI=[%d],Target RSSI=[%d],Delta=[%d] \n",bestNeighbor.ap_BSSID,(int)currWifiStats.sta_RSSI,bestNeighbor.ap_SignalStrength,delta);
         incrementBackoff(&postAssocBackOffTime); 
         return retStatus;
     }
@@ -2140,21 +2145,21 @@ static int start_post_assoc_roaming(WIFI_HAL_ROAMING_MODE roamingMode)
     int roamStat = wpaCtrlSendCmd(cmd);
     pthread_mutex_unlock(&wpa_sup_lock);
     if(roamStat == RETURN_OK) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WiFi ROAM: Roaming triggered to %s . \n",bestNeighbor.ap_BSSID);
+        WIFI_LOG_INFO("WiFi ROAM: Roaming triggered to %s . \n",bestNeighbor.ap_BSSID);
         pthread_mutex_lock(&wifi_roam_lock);
         cur_roaming_state = WIFI_HAL_ROAM_STATE_ROAMING_TRIGGERED;
         pthread_mutex_unlock(&wifi_roam_lock);
         if(bestNeighbor.ap_SignalStrength >= pstRoamingCtrl.postAssnSelfSteerThreshold) {
             postAssocBackOffTime = pstRoamingCtrl.postAssnBackOffTime;  // Roaming is successfull and connected to a good AP Lets reset Back off timer.
             backOffRefreshed = 1; 
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully roamed to best AP.\n");
+            WIFI_LOG_INFO("Successfully roamed to best AP.\n");
         } else {
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Roaming is successful, But RSSI is still low. Increase Backoff\n");
+            WIFI_LOG_INFO("Roaming is successful, But RSSI is still low. Increase Backoff\n");
             incrementBackoff(&postAssocBackOffTime);
         }
         retStatus = RETURN_OK;
     } else {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Failed to trigger ROAM operation. \n");
+        WIFI_LOG_INFO("Failed to trigger ROAM operation. \n");
         incrementBackoff(&postAssocBackOffTime);
     }
     return retStatus;
@@ -2181,19 +2186,19 @@ int start_ap_steer_roaming()
    // AP steer roaming, Update 802.11K neighbor report
    int isRRMSupported = wifi_get_rrm_support(); 
    if(isRRMSupported && (pstRoamingCtrl.roam80211kvrEnable == true)) {
-       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: RRM is enabled in current connection. trying to get Neighbor report. ! \n");
+       WIFI_LOG_INFO("RRM is enabled in current connection. trying to get Neighbor report. ! \n");
        wifi_rrm_neighbor_rep_request_t nbr_req;
        memset(&nbr_req,0,sizeof(wifi_rrm_neighbor_rep_request_t));
        memset(&stRrmNeighborRpt,0,sizeof(wifi_rrm_neighbor_report_t));
        cur_rrm_nbr_rep_state = WIFI_HAL_RRM_NEIGHBOR_REP_STATE_IDLE; 
        int status = wifi_getRRMNeighborReport(&nbr_req,&stRrmNeighborRpt);
        if(status == RETURN_OK) {
-           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Successfully sent request for RRM Neighbors. \n");
+           WIFI_LOG_INFO("Successfully sent request for RRM Neighbors. \n");
        } else {
-           RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in getting RRM Neighbor report. \n");
+           WIFI_LOG_ERROR("Failure in getting RRM Neighbor report. \n");
        }
    } else {
-       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: RRM is not supported or Not enabled. \n");
+       WIFI_LOG_INFO("RRM is not supported or Not enabled. \n");
    }
 
    if(stRrmNeighborRpt.neighbor_cnt > 0 && (pstRoamingCtrl.roam80211kvrEnable == true)) {
@@ -2204,13 +2209,13 @@ int start_ap_steer_roaming()
            if(strstr(freqList,freqStr) == NULL) 
                pos += snprintf(&freqList[pos],BUFF_LEN_64," %s",freqStr);
        }
-       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: RRM, Setting scan Freq based on Neighbor report to - %s \n",freqList);
+       WIFI_LOG_INFO("RRM, Setting scan Freq based on Neighbor report to - %s \n",freqList);
        snprintf(cmd,BUFF_LEN_32,"SET freq_list %s",freqList);
        pthread_mutex_lock(&wpa_sup_lock);
        wpaCtrlSendCmd(cmd);
        pthread_mutex_unlock(&wpa_sup_lock);
    } else {
-       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: 802.11K Neighbor report not present, Scanning all channels for Roaming. \n");
+       WIFI_LOG_INFO("802.11K Neighbor report not present, Scanning all channels for Roaming. \n");
    }
    start_post_assoc_roaming(WIFI_HAL_ROAMING_MODE_AP_STEERING); 
 
@@ -2259,35 +2264,35 @@ void start_wifi_signal_monitor_timer(void *arg)
         prevTimeFrame = timeFrame;
     }
     
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Starting signal monitor thread, TimeFrame = %d with Backoff = %d.\n",timeFrame,timeIncrement);
+    WIFI_LOG_INFO("Starting signal monitor thread, TimeFrame = %d with Backoff = %d.\n",timeFrame,timeIncrement);
     clock_gettime(CLOCK_MONOTONIC, &to);
     to.tv_sec += timeFrame;
     int retVal = -1;
     pthread_mutex_lock(&wifi_roam_lock);
     if((retVal = pthread_cond_timedwait(&cond,&wifi_roam_lock,&to)) == 0) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Signal strength recovered or connection state changed, lets stop roaming timer. !\n");
+        WIFI_LOG_INFO("Signal strength recovered or connection state changed, lets stop roaming timer. !\n");
         cur_roaming_state = WIFI_HAL_ROAM_STATE_ROAMING_IDLE;
         pthread_mutex_unlock(&wifi_roam_lock);
      }
      else if(retVal == ETIMEDOUT) {
-         RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Signal monitor timer expired, RSSI is still lower, trigger roaming operation.\n");
+         WIFI_LOG_INFO("Signal monitor timer expired, RSSI is still lower, trigger roaming operation.\n");
          cur_roaming_state = WIFI_HAL_ROAM_STATE_THRESHOLD_TIMER_EXPIRED;
          pthread_mutex_unlock(&wifi_roam_lock);
          if(cur_roaming_mode == WIFI_HAL_ROAMING_MODE_SELF_STEERING) {
-             RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Starting Self steer roaming... \n");
+             WIFI_LOG_INFO("Starting Self steer roaming... \n");
              start_post_assoc_roaming(WIFI_HAL_ROAMING_MODE_SELF_STEERING);
              rssiThreshold = pstRoamingCtrl.postAssnSelfSteerThreshold;
          } else if(cur_roaming_mode == WIFI_HAL_ROAMING_MODE_AP_STEERING){
-             RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Starting AP-Controlled roaming... \n");
+             WIFI_LOG_INFO("Starting AP-Controlled roaming... \n");
              start_ap_steer_roaming();
              rssiThreshold = pstRoamingCtrl.postAssnAPctrlThreshold;
          } else {
-             RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unrecognized roaming mode, skipping Roaming operation.\n");
+             WIFI_LOG_ERROR("Unrecognized roaming mode, skipping Roaming operation.\n");
          }
          //  Refresh signal_monitor
          wifi_set_signal_monitor(rssiThreshold);
      } else {
-         RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Wifi Roam conditional wait failed.! \n");
+         WIFI_LOG_ERROR("Wifi Roam conditional wait failed.! \n");
          pthread_mutex_unlock(&wifi_roam_lock);
      }
      pthread_mutex_lock(&wifi_roam_lock);
@@ -2306,7 +2311,7 @@ int wifi_get_rrm_support()
     if(retStatus == RETURN_OK && return_buf[0] != '\0' ) {
         rrmSupport = strtol(return_buf,NULL,10);
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get RRM support.\n");
+        WIFI_LOG_ERROR("Failed to get RRM support.\n");
     }
     pthread_mutex_unlock(&wpa_sup_lock);
     return rrmSupport;
@@ -2331,7 +2336,7 @@ INT wifi_getRRMNeighborReport(wifi_rrm_neighbor_rep_request_t* nbr_req, wifi_rrm
     // Check if the client is Associated by checking the current bssid.
     memset(bssid,0,sizeof(bssid));
     if(wifi_getBaseBSSID(ssidIndex, bssid) == RETURN_ERR || bssid[0] == '\0') {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Client is not associated, RRM request failed.\n");
+        WIFI_LOG_ERROR("Client is not associated, RRM request failed.\n");
         return retStatus;
     }
 
@@ -2343,18 +2348,18 @@ INT wifi_getRRMNeighborReport(wifi_rrm_neighbor_rep_request_t* nbr_req, wifi_rrm
             usleep(100000);
        }
        if(retry >= 10) {
-           RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get RRM response, Request timed out.!\n");
+           WIFI_LOG_ERROR("Failed to get RRM response, Request timed out.!\n");
        } else if(cur_rrm_nbr_rep_state == WIFI_HAL_RRM_NEIGHBOR_REP_REQUEST_FAILED) {
-           RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: RRM neighbor report request failed.\n");
+           WIFI_LOG_ERROR("RRM neighbor report request failed.\n");
        } else if (cur_rrm_nbr_rep_state == WIFI_HAL_RRM_NEIGHBOR_REP_STATE_INTERNAL_ERROR) {
-           RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: RRM neighbor report report received, But failed to parse.\n");
+           WIFI_LOG_ERROR("RRM neighbor report report received, But failed to parse.\n");
        } else if (cur_rrm_nbr_rep_state == WIFI_HAL_RRM_NEIGHBOR_REP_RECEIVED) {
-           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: RRM Neighbor report succesfully received.\n");
+           WIFI_LOG_INFO("RRM Neighbor report succesfully received.\n");
            //memcpy(nbr_rpt,&stRrmNeighborRpt,sizeof(wifi_rrm_neighbor_report_t));
            retStatus = RETURN_OK;
        }
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to send RRM Neighbor Request. \n");
+        WIFI_LOG_ERROR("Failed to send RRM Neighbor Request. \n");
     }
     cur_rrm_nbr_rep_state = WIFI_HAL_RRM_NEIGHBOR_REP_STATE_IDLE;
     return retStatus;
@@ -2376,7 +2381,7 @@ INT wifi_sendNeighborReportRequest(wifi_rrm_neighbor_rep_request_t* nbr_req)
     memset(cmd,0,BUFF_LEN_64);
 
     if(nbr_req->ssid[0] != '\0') {
-        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Sending RRM neighbor request with ssid=%s, lci=%d, civic=%d \n",nbr_req->ssid,nbr_req->lci,nbr_req->civic);
+        WIFI_LOG_DEBUG("Sending RRM neighbor request with ssid=%s, lci=%d, civic=%d \n",nbr_req->ssid,nbr_req->lci,nbr_req->civic);
         snprintf(cmd,sizeof(cmd),"NEIGHBOR_REP_REQUEST ssid=\"%s\" lci=%d civic=%d",nbr_req->ssid,nbr_req->lci,nbr_req->civic);
     } else {
         snprintf(cmd,sizeof(cmd),"NEIGHBOR_REP_REQUEST");
@@ -2385,10 +2390,10 @@ INT wifi_sendNeighborReportRequest(wifi_rrm_neighbor_rep_request_t* nbr_req)
     retStatus = wpaCtrlSendCmd(cmd);
     pthread_mutex_unlock(&wpa_sup_lock);
     if(retStatus == 0) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: RRM Neighbor report request sent successfully \n");
+        WIFI_LOG_INFO("RRM Neighbor report request sent successfully \n");
         retStatus = RETURN_OK;
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to send RRM Request, cmd = %s \n",cmd);
+        WIFI_LOG_ERROR("Failed to send RRM Request, cmd = %s \n",cmd);
     }
     return retStatus;
 }
@@ -2410,10 +2415,10 @@ int parse_neighbor_report_response(char *nbr_response,wifi_rrm_neighbor_report_t
     int op_class,channel,phy_type;
 
     if(!nbr_response || nbr_response[0] == '\0') {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unable to parse - Neighbor response is NULL. \n");
+        WIFI_LOG_ERROR("Unable to parse - Neighbor response is NULL. \n");
         return RETURN_ERR;
     } else if(!nbr_rpt) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unable to parse - Input Neighbor report is NULL \n");
+        WIFI_LOG_ERROR("Unable to parse - Input Neighbor report is NULL \n");
         return RETURN_ERR;
     }
 
@@ -2436,15 +2441,15 @@ int parse_neighbor_report_response(char *nbr_response,wifi_rrm_neighbor_report_t
             nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].op_class = op_class;
             nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].phy_type = phy_type;
             nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].freq = wifi_getRadioFrequencyFromChannel(channel);
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: RRM Neighbor[%d] -  Bssid = %s , Info = %s, op_class=%d, Channel = %d, Phy_Type = %d, Freq=%d\n ",nbr_rpt->neighbor_cnt,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].bssid,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].bssidInfo,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].op_class,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].channel,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].phy_type,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].freq);
+            WIFI_LOG_INFO("RRM Neighbor[%d] -  Bssid = %s , Info = %s, op_class=%d, Channel = %d, Phy_Type = %d, Freq=%d\n ",nbr_rpt->neighbor_cnt,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].bssid,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].bssidInfo,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].op_class,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].channel,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].phy_type,nbr_rpt->neighbor_ap[nbr_rpt->neighbor_cnt].freq);
              nbr_rpt->neighbor_cnt+=1;
       } else if(match){
-          RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: BSSID already present in neighbor list, Skipping %s \n",bssid);
+          WIFI_LOG_INFO("BSSID already present in neighbor list, Skipping %s \n",bssid);
       } else {
-          RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Maximum neighbors added to list, Skipping.\n");
+          WIFI_LOG_INFO("Maximum neighbors added to list, Skipping.\n");
       }
    } else {
-         RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Failed to Parse Neighbor Report - Skipping entry\n");
+         WIFI_LOG_INFO("Failed to Parse Neighbor Report - Skipping entry\n");
    }
    return RETURN_OK;
 }

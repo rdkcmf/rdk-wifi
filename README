@@ -1,16 +1,105 @@
-Overview:
----------
+# wifi-hal
 
-wifi-hal-interface files a generic absratction layer over hadware abstraction layer.
+wifi-hal provides a generic absratction over the OS level wifi layer
 
+## rdk/yocto build
 
-Build Instructions:
--------------------
-* Building the wifi-hal-interface module
-  It follows the yocto build system
+Follow rdk instructions for setting up a yocto build for a specific device.  Then from the yocto bitbake command line:
+
   bitbake wifi-hal-interface
 
- Here, librdkwifihal library instaled under "/usr/lib/"
- And the header files installed under "/usr/include/" on target
+librdkwifihal library installed under "/usr/lib/" and the header files installed under "/usr/include/" on target
 
+## Desktop (Linux/Ubuntu) build
 
+  export WIFI_ROOT=~/wifi 
+  export WIFI_BRANCH=2107_sprint
+  mkdir -p $WIFI_ROOT/deps 
+  mkdir -p $WIFI_ROOT/install
+
+### Build wpa_supplicant and libwpa_client.so
+
+Here are some rough instructions on building these:
+
+First the following dependencies may be needed by wpa_supplicant build:
+
+  sudo apt-get install libssl-dev libdbus-1-dev libnl-3-dev libnl-genl-3-dev
+
+Downloads wpa_supplicant version 2.9 form https://w1.fi/releases/ (wpa_supplicant -v gave 2.9 on ubuntu 20 so I just tried to match that)
+
+  cd $WIFI_ROOT/deps
+  wget https://w1.fi/releases/wpa_supplicant-2.9.tar.gz
+  tar xzf wpa_supplicant-2.9.tar.gz
+  cd $WIFI_ROOT/deps/wpa_supplicant-2.9/wpa_supplicant
+  cp defconfig .config
+  make
+  make DESTDIR=$WIFI_ROOT/install install
+  make libwpa_client.so
+  mkdir -p $WIFI_ROOT/install/usr/local/lib
+  cp libwpa_client.so $WIFI_ROOT/install/usr/local/lib
+
+### Build google test suite
+
+If you plan to run the wifi gtest suite then build googletest:
+
+  cd $WIFI_ROOT
+  git clone https://github.com/google/googletest.git deps/googletest
+  cmake -Hdeps/googletest -Bdeps/build/googletest -DCMAKE_INSTALL_PREFIX=$WIFI_ROOT/install
+  make -C deps/build/googletest && make -C deps/build/googletest install
+
+### Build wifi-hal
+
+  cd $WIFI_ROOT
+  git clone ssh://gerrit.teamccp.com:29418/rdk/components/generic/wifi/generic -b $WIFI_BRANCH wifi_git
+  cd wifi_git
+  libtoolize
+  autoreconf -if
+  mkdir build && cd build
+  ../configure  --prefix=$WIFI_ROOT/install --without-rdklogger CFLAGS="-Wall -Werror -g -I$WIFI_ROOT/wifi_git/include -I$WIFI_ROOT/wifi_git/src -I$WIFI_ROOT/deps/wpa_supplicant-2.9/src/common -I$WIFI_ROOT/install/include" CXXFLAGS="-g -I$WIFI_ROOT/wifi_git/include -I$WIFI_ROOT/install/include -I$WIFI_ROOT/deps/deps/wpa_supplicant-2.9/src/common" LDFLAGS="-L$WIFI_ROOT/install/usr/local/lib -lwpa_client -L$WIFI_ROOT/install/lib"
+  make
+  make install
+
+### Run gtest suite:
+
+  cd $WIFI_ROOT/wifi_git/build
+  LD_LIBRARY_PATH=$WIFI_ROOT/install/usr/local/lib make check
+  
+### Run testwifi with valgrind
+
+In order to run this fully you may need to make the following mod:
+--- a/test/testwifi.c
++++ b/test/testwifi.c
+@@ -700,7 +700,7 @@ int testWifiConnect(INT ssidIndex, CHAR *AP_SSID,CHAR *AP_security_KeyPassphrase
+     int saveSSID=1;
+     wpsWaitTime=TIME_WAIT;
+ #ifndef RDKC
+-    ret=wifi_connectEndpoint(ssidIndex,AP_SSID,AP_security_mode,NULL,NULL,AP_security_KeyPassphrase,saveSSID,eapIdentity,carootcert,clientcert,privatekey);
++    ret=wifi_connectEndpoint(ssidIndex,AP_SSID,AP_security_mode,NULL,AP_security_KeyPassphrase,AP_security_KeyPassphrase,saveSSID,eapIdentity,carootcert,clientcert,privatekey);
+ #else
+     ret=wifi_connectEndpoint(ssidIndex,AP_SSID,AP_security_mode,NULL,AP_security_KeyPassphrase,AP_security_KeyPassphrase,saveSSID,eapIdentity,carootcert,clientcert,privatekey);
+ #endif
+ 
+Check for the existance of the control interface "/var/run/wpa_supplicant/wlan0"
+  sudo ls -l /var/run/wpa_supplicant/
+
+If a different interface name exist (e.g. wlx1cbfced9b131) then create a softlink named wlan0
+  sudo ln -s /var/run/wpa_supplicant/wlx1cbfced9b131 /var/run/wpa_supplicant/wlan0
+
+Now run testwifi
+  sudo LD_LIBRARY_PATH=$WIFI_ROOT/install/usr/local/lib valgrind --leak-check=full --show-leak-kinds=all $WIFI_ROOT/install/bin/testwifi
+  Example: connect to xb7 with ssid myxb7 w/ pw abc12345
+  Enter:
+  1 (wifi init)
+  8 (scan ssid)
+  5 (connect to ssid)
+  myxb7 (ssid)
+  5 (WIFI_SECURITY_WPA2_PSK_AES)
+  abc12345 (passphrase)
+  q+y (quit)
+  
+#### Verify testwifi connection was successfully created
+  sudo dhclient wlan0
+  ping -I wlan0 google.com
+
+#### cleanup 
+  sudo wpa_cli remove_network 0  

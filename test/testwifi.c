@@ -73,7 +73,8 @@ void test_wifi_init(void);
 int check;
 int connectFlag;
 int disconnectFlag;
-pthread_t connectThread=NULL;
+pthread_t connectThread;
+int connectThreadRunning = 0;
 /*
 static struct RadioStruct
 {
@@ -172,7 +173,7 @@ int main(int argc, char * argv[])
         case 1:
             test_wifi_init();
             initStatus=1;
-            printf("wifi intialization done \n",num);
+            printf("wifi intialization done \n");
             break;
         case 2:
             printf("-------------------------------------------------------------------------------------------\n");
@@ -193,7 +194,7 @@ int main(int argc, char * argv[])
             printf("please specify the security mode %s \n",ssid);
             printf("-------------------------------------------------------------------------------------------\n");
             printf ("WIFI_SECURITY_WEP_64 0 \t WIFI_SECURITY_WEP_128 1 \t WIFI_SECURITY_WPA_PSK_TKIP 2 \t WIFI_SECURITY_WPA_PSK_AES 3 \t WIFI_SECURITY_WPA2_PSK_TKIP 4 \t WIFI_SECURITY_WPA2_PSK_AES 5 \t WIFI_SECURITY_WPA_ENTERPRISE_TKIP 6 \t WIFI_SECURITY_WPA_ENTERPRISE_AES 7 \t WIFI_SECURITY_WPA2_ENTERPRISE_TKIP 8 \t WIFI_SECURITY_WPA2_ENTERPRISE_AES 9 \n");
-            scanf(" %d",&securityMode);
+            scanf(" %u",&securityMode);
             if((securityMode >= WIFI_SECURITY_NONE ) && (securityMode < WIFI_SECURITY_WPA_PSK_TKIP ))
             {
                     printf("-------------------------------------------------------------------------------------------\n");
@@ -507,7 +508,7 @@ void getallSSID(int radioIndex)
                 printf("  ap_DTIMPeriod is %d \t ",neighborAPlist[size].ap_DTIMPeriod);*/
     }
     printf("\n -----------------------------------------------------------------------------------------------------------------------------------------------\n");
-    printf("malloc freed = %d ", malloc_usable_size(neighborAPlist));
+    printf("malloc freed = %lu ", malloc_usable_size(neighborAPlist));
     free(neighborAPlist);
 
 }
@@ -656,11 +657,12 @@ void wpsPushFunc(int waitTime)
         printf("\n WPS button press failed \n ");
         return;
     }
-    if(connectThread == NULL)
+    if(!connectThreadRunning)
     {
+        connectThreadRunning = 1;
         pthread_create(&connectThread, NULL,connThreadFunc, NULL);
         pthread_join(connectThread,&ret);
-        connectThread = NULL;
+        connectThreadRunning = 0;
     }
     else
         printf("connecting to AP is going on please try after sometime \n");
@@ -671,9 +673,8 @@ void wpsPushFunc(int waitTime)
 }
 void ssidDisconnect(char* ssid,int waitTime)
 {
-
     pthread_t disconnectThread;
-    void *ret;
+
     disconnectWaitTime=waitTime;
     pthread_create(&disconnectThread, NULL,disconnectThreadFunc, NULL);
     //    pthread_join(wpsThread,&ret);
@@ -712,17 +713,16 @@ int testWifiConnect(INT ssidIndex, CHAR *AP_SSID,CHAR *AP_security_KeyPassphrase
     {
         printf("connecting to ssid %s  with passphrase %s \n",AP_SSID,AP_security_KeyPassphrase);
     }
-    if(connectThread == NULL)
+    if(!connectThreadRunning)
     {
+        connectThreadRunning = 1;
         pthread_create(&connectThread, NULL,connThreadFunc, NULL);
-        pthread_join(connectThread,&ret);
-        connectThread = NULL;
+        pthread_join(connectThread,(void*)&ret);
+        connectThreadRunning = 0;
     }
     else
         printf("connecting to AP is going on please try after sometime \n");
-
-
-
+    return ret;
 }
 
 void test_wifi_getStats()

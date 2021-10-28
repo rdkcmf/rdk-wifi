@@ -16,6 +16,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */ 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,9 +26,9 @@
 #include <unistd.h>
 #include <wifi_common_hal.h>
 #include <stdbool.h>
-#include "rdk_debug.h"
+#include <pthread.h>
+#include "wifi_log.h"
 
-#define LOG_NMGR "LOG.RDK.WIFIHAL"
 #define MAX_SSID_LEN        32           /* Maximum SSID name */
 #define MAX_VERSION_LEN     16          /* Maximum Version Len */
 #define BUFF_LEN_1024       1024
@@ -75,8 +76,9 @@ typedef enum _SsidSecurity
     { NET_WIFI_SECURITY_WPA2_ENTERPRISE_TKIP,		"WPA2-ENTERPRISE, TKIP"		},
     { NET_WIFI_SECURITY_WPA2_ENTERPRISE_AES,		"WPA2-ENTERPRISE, AES"		},
     { NET_WIFI_SECURITY_NOT_SUPPORTED, 		  	"Security format not supported" },
-};*/
-
+};
+*/
+/*
 static struct _wifi_securityModes
 {
     const char          *modeString;
@@ -96,6 +98,7 @@ static struct _wifi_securityModes
     { "WPA-WPA2","AES","[WPA-PSK-TKIP+CCMP][WPA2-PSK-CCMP-preauth]"},
     { "WPA-WPA2","TKIP,AES","[WPA-PSK-CCMP+TKIP][WPA2-PSK-CCMP+TKIP]"},
     { "WPA-WPA2","TKIP,AES","[WPA-PSK-CCMP+TKIP][WPA2-PSK-CCMP+TKIP-preauth]"},
+
     { "WPA-WPA2-Enterprise","TKIP","[WPA-EAP-TKIP][WPA2-EAP-TKIP]"},
     { "WPA-WPA2-Enterprise","AES","[WPA-EAP-CCMP][WPA2-EAP-CCMP]"},
     { "WPA-WPA2-Enterprise","TKIP,AES","[WPA-EAP-CCMP+TKIP][WPA2-EAP-CCMP+TKIP]"},
@@ -105,6 +108,7 @@ static struct _wifi_securityModes
     { "WPA-Enterprise","AES","[WPA-EAP-CCMP]"},
     { "WPA2-Enterprise","TKIP","[WPA2-EAP-TKIP]"},
     { "WPA2-Enterprise","AES","[WPA2-EAP-CCMP]"},
+
     { "WPA","TKIP","[WPA-PSK-TKIP]"},
     { "WPA2","TKIP","[WPA2-PSK-TKIP]"},
     { "WPA2","TKIP","[WPA2-PSK-TKIP-preauth]"},
@@ -115,8 +119,11 @@ static struct _wifi_securityModes
     { "WPA2","TKIP,AES","[WPA2-PSK-CCMP+TKIP]"},
     { "WPA2","TKIP,AES","[WPA2-PSK-CCMP+TKIP-preauth]"},
     { "WEP","","WEP"},
+    { "WPA2","AES","[WPA2-PSK+FT/PSK-CCMP][WPS][ESS]"},
+    { "WPA2-Enterprise","AES","[WPA2-EAP+FT/EAP-CCMP][ESS]"},
     { "None","","None"},
 };
+*/
 /*{
     { NET_WIFI_SECURITY_NONE,          		    "No Security"                   },
     { NET_WIFI_SECURITY_WEP_64, 	            "WEP (Open & Shared)"        	},
@@ -166,9 +173,9 @@ typedef enum {
     WIFI_HAL_WPA_SUP_SCAN_STATE_RESULTS_RECEIVED,
 } WIFI_HAL_WPA_SUP_SCAN_STATE;
 
-char* getValue(char *buf, char *keyword);
+char* getValue(const char *buf, const char *keyword);
 int wpaCtrlSendCmd(char *cmd);
-int get_wifi_self_steer_matching_bss_list(char* ssid_to_find,wifi_neighbor_ap_t neighborAPList[],int timeout);
+int get_wifi_self_steer_matching_bss_list(const char* ssid_to_find,wifi_neighbor_ap_t neighborAPList[],int timeout);
 static INT getFrequencyListFor_Band(WIFI_HAL_FREQ_BAND band, char *output_string);
 BOOL isDualBandSupported();
 #ifdef WIFI_CLIENT_ROAMING
@@ -188,8 +195,8 @@ wifi_neighbor_ap_t ap_list[512];
 
 pthread_t monitor_thread;
 pthread_t wpa_health_mon_thread;
-void monitor_thread_task(void *param);
-void monitor_wpa_health();
+void* monitor_thread_task(void *param);
+void* monitor_wpa_health(void* param);
 static int wifi_getWpaSupplicantStatus();
 static int wifi_openWpaSupConnection();
 static INT wifi_getRadioSignalParameter (const CHAR* parameter, CHAR *output_string);
@@ -202,11 +209,11 @@ INT wifi_getHalVersion(CHAR *output_string)
     if(output_string) {
         ret = sprintf(output_string,"%d.%d.%d",WIFI_HAL_MAJOR_VERSION,WIFI_HAL_MINOR_VERSION,WIFI_HAL_MAINTENANCE_VERSION);
         if(ret <= 0 || ret > MAX_VERSION_LEN) { 
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Failed generate HAL Version, ret = %d.\n",ret );
+            WIFI_LOG_ERROR("Failed generate HAL Version, ret = %d.\n",ret );
             retStatus = RETURN_ERR;
          }
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Failed to get HAL Version - Input String is NULL.\n" );
+        WIFI_LOG_ERROR("Failed to get HAL Version - Input String is NULL.\n" );
         retStatus = RETURN_ERR;
     } 
     return retStatus;
@@ -215,14 +222,14 @@ static INT getFrequencyListFor_Band(WIFI_HAL_FREQ_BAND band, char *output_string
 {
     if(output_string == NULL)
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"[%s] Memory not allocated for output_string \n",__FUNCTION__);
+        WIFI_LOG_ERROR("[%s] Memory not allocated for output_string \n",__FUNCTION__);
         return RETURN_ERR;
     }
     char *s,*t,*r;
     char lines[32][64];
-    int i,k;
+    int i;
     INT ret = RETURN_ERR;
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: in getFrequencyListFor_Band ..\n");
+    WIFI_LOG_INFO("in getFrequencyListFor_Band ..\n");
     pthread_mutex_lock(&wpa_sup_lock);
     int ret_status = wpaCtrlSendCmd("GET_CAPABILITY freq");
     if(ret_status == RETURN_OK)
@@ -231,17 +238,17 @@ static INT getFrequencyListFor_Band(WIFI_HAL_FREQ_BAND band, char *output_string
         {
             s = strstr(return_buf, "Mode[A] Channels:");
             t = strstr(return_buf, "Mode[B] Channels:");
-            if(t) *t = NULL;
+            if(t) *t = 0;
         }
         else if (band == WIFI_HAL_FREQ_BAND_24GHZ)
         {
             s = strstr(return_buf, "Mode[G] Channels:");
             t = strstr(return_buf, "Mode[A] Channels:");
-            if(t) *t = NULL;
+            if(t) *t = 0;
         }
         if (s == NULL)
         {
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"[%s] Error in selecting the frequencies\n",__FUNCTION__);
+            WIFI_LOG_INFO("[%s] Error in selecting the frequencies\n",__FUNCTION__);
             ret = RETURN_ERR;
         }
         else
@@ -264,13 +271,13 @@ static INT getFrequencyListFor_Band(WIFI_HAL_FREQ_BAND band, char *output_string
                 strcat(output_string,lines[k]);
                 strcat(output_string, " ");
             }
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"frequencies selected : [%s] \n",output_string);
+            WIFI_LOG_DEBUG("frequencies selected : [%s] \n",output_string);
             ret = RETURN_OK;
         }
     }
     else
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"[%s] Error in getting supported bands- Unable to get Channel Capability\n",__FUNCTION__);
+        WIFI_LOG_ERROR("[%s] Error in getting supported bands- Unable to get Channel Capability\n",__FUNCTION__);
         ret = RETURN_ERR;
     }
     pthread_mutex_unlock(&wpa_sup_lock);
@@ -288,7 +295,7 @@ char* readFile(char *filename)
     fp=fopen(filename,"r");
     if(fp==NULL)
     {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"readFile(): File Open Error \n" );
+        WIFI_LOG_INFO("readFile(): File Open Error \n" );
         return NULL;
     }
     fseek(fp,0L,SEEK_END);
@@ -299,14 +306,14 @@ char* readFile(char *filename)
         buf=(char *)calloc(fBytes+1,sizeof(char));
         if(buf == NULL)
         {
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"readFile(): Memory Allocation Error \n" );
+            WIFI_LOG_INFO("readFile(): Memory Allocation Error \n" );
             fclose(fp);
             return NULL; 
         }
         freadBytes = fread(buf,sizeof(char),fBytes,fp);
         if(freadBytes != fBytes) // Do we need to proceed on partial read.. ? Blocking for now.
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR," readFile(): Error occured during fread(), freadBytes= %d  \n" ,freadBytes); 
+            WIFI_LOG_ERROR(" readFile(): Error occured during fread(), freadBytes= %ld  \n" ,freadBytes); 
             fclose(fp);
             free(buf);
             return NULL;
@@ -314,7 +321,7 @@ char* readFile(char *filename)
     }
     else
     {
-       RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"readFile(): File is empty \n" );
+       WIFI_LOG_ERROR("readFile(): File is empty \n" );
     }
     fclose(fp);
     return buf;
@@ -328,11 +335,11 @@ int interface_exists(char *interface) {
     ifpsave = ifp = if_nameindex();
 
     if(!ifp){
-        RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"if_nameindex call failed: %s\n", strerror(errno));
+        WIFI_LOG_DEBUG("if_nameindex call failed: %s\n", strerror(errno));
         return 0;
     }
     while(ifp->if_index) {
-        RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"%d %s\n", ifp->if_index, ifp->if_name);
+        WIFI_LOG_DEBUG("%d %s\n", ifp->if_index, ifp->if_name);
         if (strcmp(ifp->if_name, interface) == 0) {
             found = 1;
             break;
@@ -350,15 +357,15 @@ INT wifi_init() {
     pthread_attr_t thread_attr;
     int ret;
 
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Initializing Generic WiFi hal.\n");
+    WIFI_LOG_INFO("Initializing Generic WiFi hal.\n");
     if(init_done == true) {
-       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Wifi init has already been done\n");
+       WIFI_LOG_INFO("Wifi init has already been done\n");
        return RETURN_OK;
     }
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: TELEMETRY_WIFI_WPA_SUPPLICANT:ENABLED \n ");    
+    WIFI_LOG_INFO("TELEMETRY_WIFI_WPA_SUPPLICANT:ENABLED \n ");    
    
     // Starting wpa_supplicant service if it is not already started
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Starting wpa_supplicant service \n ");
+    WIFI_LOG_INFO("Starting wpa_supplicant service \n ");
 #ifndef RDKC
     system("systemctl start wpa_supplicant");
 #else
@@ -370,52 +377,52 @@ INT wifi_init() {
    if(x)
    {
 
-       /* Starting wpa_supplicant may take some time, try 75 times before giving up */
-       retry = 0;
-       while (retry++ < 75) {
-           g_wpa_ctrl = wpa_ctrl_open(WPA_SUP_CTRL);
-           if (g_wpa_ctrl != NULL) break;
-           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"ctrl_open returned NULL \n");
-           sleep(1);
-       }
+        /* Starting wpa_supplicant may take some time, try 75 times before giving up */
+        retry = 0;    
+        while (retry++ < 75) {
+            g_wpa_ctrl = wpa_ctrl_open(WPA_SUP_CTRL);
+            if (g_wpa_ctrl != NULL) break;
+            WIFI_LOG_INFO("ctrl_open returned NULL \n");
+            sleep(1);
+        }
 
-       if (g_wpa_ctrl == NULL) {
-           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_ctrl_open failed for control interface \n");
-           return RETURN_ERR;
-       }
-       g_wpa_monitor = wpa_ctrl_open(WPA_SUP_CTRL);
-       if ( g_wpa_monitor == NULL ) {
-           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_ctrl_open failed for monitor interface \n");
-           return RETURN_ERR;
-       }
+        if (g_wpa_ctrl == NULL) {
+            WIFI_LOG_INFO("wpa_ctrl_open failed for control interface \n");
+            return RETURN_ERR;
+        }
+        g_wpa_monitor = wpa_ctrl_open(WPA_SUP_CTRL);
+        if ( g_wpa_monitor == NULL ) {
+            WIFI_LOG_INFO("wpa_ctrl_open failed for monitor interface \n");
+            return RETURN_ERR;
+        }
 
-       if ( wpa_ctrl_attach(g_wpa_monitor) != 0) {
-           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_ctrl_attach failed \n");
-           return RETURN_ERR;
-       }
-       if (pthread_mutex_init(&wpa_sup_lock, NULL) != 0)
-       {
-           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: mutex init failed\n");
-           return RETURN_ERR;
-       }
-       /* Create thread to monitor events from wpa supplicant */
-       pthread_attr_init(&thread_attr);
-       pthread_attr_setstacksize(&thread_attr, 256*1024);
-
-       ret = pthread_create(&monitor_thread, &thread_attr, monitor_thread_task, NULL);
-
-
-       if (ret != 0) {
-           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Monitor thread creation failed \n");
-           return RETURN_ERR;
-       }
-       // Start wpa_supplicant health monitor thread
-       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Starting wpa_supplicant health monitor thread \n");
-       ret = pthread_create(&wpa_health_mon_thread, NULL, monitor_wpa_health, NULL);
-       if (ret != 0) {
-           RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: WPA health monitor thread creation failed  \n");
-           return RETURN_ERR;
-       }
+        if ( wpa_ctrl_attach(g_wpa_monitor) != 0) {
+            WIFI_LOG_INFO("wpa_ctrl_attach failed \n");
+            return RETURN_ERR;
+        }
+        if (pthread_mutex_init(&wpa_sup_lock, NULL) != 0)
+        {
+            WIFI_LOG_INFO("mutex init failed\n");
+            return RETURN_ERR;
+        }
+        /* Create thread to monitor events from wpa supplicant */
+        pthread_attr_init(&thread_attr);
+        pthread_attr_setstacksize(&thread_attr, 256*1024);
+        
+        ret = pthread_create(&monitor_thread, &thread_attr, monitor_thread_task, NULL);
+        
+        
+        if (ret != 0) {        
+            WIFI_LOG_INFO("Monitor thread creation failed \n");
+            return RETURN_ERR;
+        }
+        // Start wpa_supplicant health monitor thread
+        WIFI_LOG_INFO("Starting wpa_supplicant health monitor thread \n");
+        ret = pthread_create(&wpa_health_mon_thread, NULL, monitor_wpa_health, NULL);
+        if (ret != 0) {
+            WIFI_LOG_INFO("WPA health monitor thread creation failed  \n");
+            return RETURN_ERR;
+        }
 #ifdef WIFI_CLIENT_ROAMING
        // Initialize and set Roaming config params
        initialize_roaming_config();
@@ -432,14 +439,14 @@ INT wifi_init() {
 // Uninitializes wifi
 INT wifi_uninit() {
 
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Stopping monitor thread\n");
+    WIFI_LOG_INFO("Stopping monitor thread\n");
 
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Disconnecting from the network\n");
+    WIFI_LOG_INFO("Disconnecting from the network\n");
     
     //check if "init_done" is not true (if previous init is not successful)
     //This helps to find if "wpa_health_mon_thread" created with a "pthread_create" during init or not.
     if(init_done == false) {
-       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Previous wifi init is not successful\n");
+       WIFI_LOG_INFO("Previous wifi init is not successful\n");
        return RETURN_OK;
     }
 
@@ -452,14 +459,14 @@ INT wifi_uninit() {
     sleep (1);
 
     if ((wpa_health_mon_thread) && ( pthread_cancel(wpa_health_mon_thread) == -1 )) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR, "[%s:%d] wpa health monitor thread cancel failed! \n",__FUNCTION__, __LINE__);
+        WIFI_LOG_ERROR( "[%s:%d] wpa health monitor thread cancel failed! \n",__FUNCTION__, __LINE__);
     }
 
     stop_monitor = true;
     pthread_join (wpa_health_mon_thread, NULL);
     pthread_join (monitor_thread, NULL);
 
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Stopping wpa_supplicant service\n");
+    WIFI_LOG_INFO("Stopping wpa_supplicant service\n");
 #ifndef RDKC
     system("systemctl stop wpa_supplicant");
 #else
@@ -495,12 +502,68 @@ INT wifi_reset() {
 // turns off transmit power for the entire Wifi subsystem, for all radios
 INT wifi_down() {
 
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Bring the wlan interface down\n");
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Hardcoding the interface to wlan0 for now\n");
+    WIFI_LOG_INFO("Bring the wlan interface down\n");
+    WIFI_LOG_INFO("Hardcoding the interface to wlan0 for now\n");
     system("ifconfig wlan0 down");
     return RETURN_OK;
 }
 
+#if 1
+static void get_security_mode_and_encryption_type(const char* flags, char* auth, char* encrypt)
+{
+    const char* wpa2 = NULL;
+    const char* wpa = NULL;
+    const char* eap = NULL;
+    const char* ccmp = NULL;
+    const char* sae = NULL;
+    const char* tkip = NULL;
+    const char* wep = NULL;
+    const char* none = NULL;
+    
+    wpa = strstr(flags, "WPA-");
+    wpa2 = strstr(flags, "WPA2-");
+    eap = strstr(flags, "EAP");
+    ccmp = strstr(flags, "CCMP");
+    sae = strstr(flags, "SAE");
+    tkip = strstr(flags, "TKIP");
+    wep = strstr(flags, "WEP");
+    none = strstr(flags, "NONE");
+
+    auth[0] = 0;
+    encrypt[0] = 0;
+
+    if(wpa)
+        strcat(auth, "WPA-");
+    if(wpa2)
+        strcat(auth, "WPA2-");
+    if(sae)
+        strcat(auth, "WPA3-");
+    if(eap)
+        strcat(auth, "Enterprise-");
+    if(wep)
+        strcat(auth, "WEP-");
+    if(none)
+        strcat(auth, "None-");
+
+    if(auth[0])
+        auth[strlen(auth) - 1] = 0;
+    else
+    {
+        WIFI_LOG_WARN("no auth flags recognized: %s\n", flags);
+        return;
+    }
+
+    if(tkip)
+        strcat(encrypt, "TKIP,");
+    if(ccmp)
+        strcat(encrypt, "AES,");
+
+    if(encrypt[0])
+        encrypt[strlen(encrypt) - 1] = 0;
+    else if(wpa || wpa2)
+        WIFI_LOG_WARN("no wpa encrypt flags recognized: %s\n", flags);
+}
+#else
 static void get_security_mode_and_encryption_type(const char* wpa_supplicant_ap_flags, char* security_mode, char* encryption_type)
 {
     int len = sizeof ( wifi_securityModes ) / sizeof ( wifi_securityModes[0] );
@@ -513,9 +576,11 @@ static void get_security_mode_and_encryption_type(const char* wpa_supplicant_ap_
             return;
         }
     }
+    WIFI_LOG_WARN("Unknown flag: %s\n", wpa_supplicant_ap_flags);
     security_mode[0] = '\0';
     encryption_type[0] = '\0';
 }
+#endif
 
 static int is_zero_bssid(char* bssid) {
     if(bssid == NULL)
@@ -533,7 +598,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
 
     if(NULL == stats)
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Input Stats is NULL \n");
+        WIFI_LOG_ERROR("Input Stats is NULL \n");
         return;
     }
 
@@ -547,7 +612,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         bssid = getValue(return_buf, "bssid");
         if (bssid == NULL)
         {
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: BSSID is NULL in Status output\n");
+            WIFI_LOG_DEBUG("BSSID is NULL in Status output\n");
             goto exit;
         }
         else
@@ -556,10 +621,10 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         ssid = getValue(ptr, "ssid");
         if (ssid == NULL)
         {
-            RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: SSID is NULL in Status output\n");
+            WIFI_LOG_DEBUG("SSID is NULL in Status output\n");
             goto exit;
         }
-        printf_decode (stats->sta_SSID, sizeof(stats->sta_SSID), ssid);
+        printf_decode ((u8*)stats->sta_SSID, sizeof(stats->sta_SSID), ssid);
 
 
         if(wpaCtrlSendCmd("BSS current") == 0) {
@@ -581,11 +646,11 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
                 token = strtok(NULL, "\n");
             }
         } else {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failed to get BSSID from BSS current\n");
+            WIFI_LOG_ERROR("Failed to get BSSID from BSS current\n");
         }
 
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpaCtrlSendCmd(STATUS) failed - Ret = %d \n",retStatus);
+        WIFI_LOG_ERROR("wpaCtrlSendCmd(STATUS) failed - Ret = %d \n",retStatus);
         goto exit;
     }
 
@@ -596,7 +661,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
 
         if (ptr == NULL)
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: RSSI not in signal poll \n");
+            WIFI_LOG_ERROR("RSSI not in signal poll \n");
             goto exit;
         }
         else {
@@ -607,7 +672,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         ptr = getValue(ptr, "LINKSPEED");
         if (ptr == NULL)
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: LINKSPEED not in signal poll \n");
+            WIFI_LOG_ERROR("LINKSPEED not in signal poll \n");
             goto exit;
         }
         else {
@@ -619,7 +684,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         ptr = getValue(ptr, "NOISE");
         if (ptr == NULL)
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: NOISE not in signal poll \n");
+            WIFI_LOG_ERROR("NOISE not in signal poll \n");
             goto exit;
         }
         else {
@@ -631,18 +696,18 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         ptr = getValue(ptr, "FREQUENCY");
         if(ptr == NULL)
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: FREQUENCY not in signal poll \n");
+            WIFI_LOG_ERROR("FREQUENCY not in signal poll \n");
             goto exit;
         } else  {
             freq = atoi(ptr);
-            RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"FREQUENCY=%d \t",freq);
+            WIFI_LOG_DEBUG("FREQUENCY=%d \t",freq);
             stats->sta_Frequency = freq;
             if((freq / 1000) == 2)
                 strcpy(stats->sta_BAND,"2.4GHz");
             else if((freq / 1000) == 5)
                 strcpy(stats->sta_BAND,"5GHz");
             else
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unknown freq band.\n");
+                WIFI_LOG_ERROR("Unknown freq band.\n");
         }
         // Read Average RSSI
         ptr = ptr + strlen(ptr) + 1;
@@ -651,15 +716,15 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         {
             avgRssi = atoi(ptr);
             stats->sta_RSSI = avgRssi;
-            RDK_LOG( RDK_LOG_DEBUG,LOG_NMGR,"AVG_RSSI=%d \n",avgRssi);
+            WIFI_LOG_DEBUG("AVG_RSSI=%d \n",avgRssi);
         }
     }
     else
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpaCtrlSendCmd(SIGNAL_POLL) failed ret = %d\n",retStatus);
+        WIFI_LOG_ERROR("wpaCtrlSendCmd(SIGNAL_POLL) failed ret = %d\n",retStatus);
         goto exit;
     }
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"bssid=%s,ssid=%s,rssi=%d,phyrate=%d,noise=%d,Band=%s\n",stats->sta_BSSID,stats->sta_SSID,(int)stats->sta_RSSI,(int)stats->sta_PhyRate,(int)stats->sta_Noise,stats->sta_BAND);
+    WIFI_LOG_INFO("bssid=%s,ssid=%s,rssi=%d,phyrate=%d,noise=%d,Band=%s\n",stats->sta_BSSID,stats->sta_SSID,(int)stats->sta_RSSI,(int)stats->sta_PhyRate,(int)stats->sta_Noise,stats->sta_BAND);
 exit:
     pthread_mutex_unlock(&wpa_sup_lock);
     return;
@@ -671,7 +736,7 @@ INT parse_scan_results(char *buf, size_t len)
     char tmp_str[100];
     char flags[256];
     char *delim_ptr, *ptr, *encrypt_ptr,*security_ptr;
-    int i;
+
     if ((len == 0) || (buf == NULL)) return count;
 
     /* example output:
@@ -693,7 +758,7 @@ INT parse_scan_results(char *buf, size_t len)
         /* Parse bssid */
         memcpy(ap_list[count].ap_BSSID, ptr, (delim_ptr-ptr));
         ap_list[count].ap_BSSID[delim_ptr-ptr] = '\0';
-/*        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"bssid=%s \n",ap_list[count].ap_BSSID); */
+/*        WIFI_LOG_INFO("bssid=%s \n",ap_list[count].ap_BSSID); */
      
         /* Parse frequency band  */
         ptr = delim_ptr + 1;
@@ -706,7 +771,7 @@ INT parse_scan_results(char *buf, size_t len)
         }
         //memcpy(ap_list[count].ap_OperatingFrequencyBand, ptr, (delim_ptr-ptr));
         //ap_list[count].ap_OperatingFrequencyBand[delim_ptr-ptr] = '\0';
-/*        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"freq=%s \n",ap_list[count].ap_OperatingFrequencyBand); */
+/*        WIFI_LOG_INFO("freq=%s \n",ap_list[count].ap_OperatingFrequencyBand); */
 
         /* parse signal level */
         ptr = delim_ptr + 1;
@@ -714,7 +779,7 @@ INT parse_scan_results(char *buf, size_t len)
         memcpy(tmp_str, ptr, (delim_ptr-ptr));
         tmp_str[delim_ptr-ptr] = '\0';
         ap_list[count].ap_SignalStrength = atoi(tmp_str);
-/*        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"signal strength=%d \n",ap_list[count].ap_SignalStrength); */
+/*        WIFI_LOG_INFO("signal strength=%d \n",ap_list[count].ap_SignalStrength); */
 
         /* parse flags */
         ptr = delim_ptr + 1;
@@ -737,9 +802,8 @@ INT parse_scan_results(char *buf, size_t len)
         ptr = delim_ptr + 1;
         delim_ptr=strchr(ptr, '\n');
         *delim_ptr = '\0'; // alters the buffer passed in; put back the '\n' after printf_decode, if this is a problem
-        printf_decode (ap_list[count].ap_SSID, 64, ptr);
-        RDK_LOG (RDK_LOG_DEBUG, LOG_NMGR,
-                "decoded SSID=%s (encoded SSID=%s) flags=%s SecuritymodeEnabled=%s EncryptionMode=%s\n",
+        printf_decode ((u8*)ap_list[count].ap_SSID, 64, ptr);
+        WIFI_LOG_DEBUG("decoded SSID=%s (encoded SSID=%s) flags=%s SecuritymodeEnabled=%s EncryptionMode=%s\n",
                 ap_list[count].ap_SSID, ptr, flags, ap_list[count].ap_SecurityModeEnabled, ap_list[count].ap_EncryptionMode);
         // *delim_ptr='\n'; // put back the '\n' after printf_decode
 
@@ -758,26 +822,26 @@ INT wifi_getNeighboringWiFiDiagnosticResult(INT radioIndex, wifi_neighbor_ap_t *
     size_t return_len=sizeof(return_buf)-1;
     int retry = 0;
     
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Starting a single scan..\n");
+    WIFI_LOG_INFO("Starting a single scan..\n");
     pthread_mutex_lock(&wpa_sup_lock);
     if (cur_scan_state == WIFI_HAL_WPA_SUP_SCAN_STATE_STARTED) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scan is already in progress, Waiting for the scan results. \n");
+        WIFI_LOG_INFO("Scan is already in progress, Waiting for the scan results. \n");
     } else {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: No in progress scanning, Starting a fresh scan.\n");
+        WIFI_LOG_INFO("No in progress scanning, Starting a fresh scan.\n");
         bNoAutoScan=TRUE;
         wpaCtrlSendCmd("BSS_FLUSH 0");
         wpaCtrlSendCmd("SCAN");
         if (strstr(return_buf, "FAIL-BUSY") != NULL) {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Scan command returned %s .. waiting \n", return_buf);            
+            WIFI_LOG_ERROR("Scan command returned %s .. waiting \n", return_buf);            
             wpaCtrlSendCmd("BSS_FLUSH 0");
             sleep(1); 
             wpaCtrlSendCmd("SCAN");
             if (strstr(return_buf, "FAIL-BUSY") != NULL) {
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Scan command returned %s FAILED \n", return_buf);
+                WIFI_LOG_ERROR("Scan command returned %s FAILED \n", return_buf);
                 goto exit_err;
             }
         }
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scan command returned %s \n", return_buf);
+        WIFI_LOG_INFO("Scan command returned %s \n", return_buf);
         cur_scan_state = WIFI_HAL_WPA_SUP_SCAN_STATE_STARTED;
     }
     pthread_mutex_unlock(&wpa_sup_lock);
@@ -786,21 +850,21 @@ INT wifi_getNeighboringWiFiDiagnosticResult(INT radioIndex, wifi_neighbor_ap_t *
     }
     pthread_mutex_lock(&wpa_sup_lock);    
     if (cur_scan_state != WIFI_HAL_WPA_SUP_SCAN_STATE_RESULTS_RECEIVED) { 
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Scan timed out retry times = %d \n",retry);
+        WIFI_LOG_ERROR("Scan timed out retry times = %d \n",retry);
         //*output_array_size=0;
        // goto exit_err;
     } //else {
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Trying to read Scan results \n"); // Lets read scan_results even if it is timed out FIX:- Xi-6 Scan timeout
+    WIFI_LOG_INFO("Trying to read Scan results \n"); // Lets read scan_results even if it is timed out FIX:- Xi-6 Scan timeout
     wpaCtrlSendCmd("SCAN_RESULTS");
     ap_count = parse_scan_results(return_buf, return_len);
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Scan results contains %d BSSIDs. \n",ap_count);
+    WIFI_LOG_INFO("Scan results contains %d BSSIDs. \n",ap_count);
     if (ap_count > 0) {
         int i;            
         *output_array_size = ap_count;
         *neighbor_ap_array = (wifi_neighbor_ap_t *)malloc(ap_count*sizeof(wifi_neighbor_ap_t));
             
         if(*neighbor_ap_array == NULL) {
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Malloc Memory allocation failure\n");            
+            WIFI_LOG_INFO("Malloc Memory allocation failure\n");            
             goto exit_err;
         }
         for (i=0; i<*output_array_size; i++)
@@ -832,15 +896,16 @@ INT wifi_getSpecificSSIDInfo(const char* SSID, WIFI_HAL_FREQ_BAND band, wifi_nei
     {
         if( RETURN_OK == getFrequencyListFor_Band(band,freq_list_string) && freq_list_string != NULL)
         {
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Setting scan Freq based on selected Band to - %s \n",freq_list_string);
-            snprintf(cmd,BUF_SIZE,"SET freq_list %s",freq_list_string);
+            WIFI_LOG_INFO("Setting scan Freq based on selected Band to - %s \n",freq_list_string);
+            if(snprintf(cmd,BUF_SIZE,"SET freq_list %s",freq_list_string) < 0)
+                return RETURN_ERR;
             pthread_mutex_lock(&wpa_sup_lock);
             wpaCtrlSendCmd(cmd);   //wpa_cli freq_list + bands returned from the above static function parsed results
             pthread_mutex_unlock(&wpa_sup_lock);
         }
         else
         {
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Error in getting the Frequency list for specified Band, NOT SCANNING . \n");
+            WIFI_LOG_INFO("Error in getting the Frequency list for specified Band, NOT SCANNING . \n");
             return RETURN_ERR;
         }
     }
@@ -850,16 +915,16 @@ INT wifi_getSpecificSSIDInfo(const char* SSID, WIFI_HAL_FREQ_BAND band, wifi_nei
     *output_array_size = bssCount;
     if(bssCount == 0)
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: No BSS found with given band and frequency \n");
+        WIFI_LOG_ERROR("No BSS found with given band and frequency \n");
         ret = RETURN_ERR;
     }
     else
     {
-        RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"WIFI_HAL: Found %d  BSS ids' for SSID %s \n",bssCount,SSID);
+        WIFI_LOG_DEBUG("Found %d  BSS ids' for SSID %s \n",bssCount,SSID);
         *filtered_ap_array = (wifi_neighbor_ap_t *)malloc(bssCount*sizeof(wifi_neighbor_ap_t));
         if(*filtered_ap_array == NULL)
         {
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Memory allocation failure\n");
+            WIFI_LOG_INFO("Memory allocation failure\n");
             ret = RETURN_ERR;
         }
         else
@@ -882,7 +947,7 @@ INT wifi_getRadioSupportedFrequencyBands(INT radioIndex, CHAR *output_string) {
 
     int retStatus = RETURN_ERR;
     if(!output_string) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in getting supported bands.. Null string\n");
+        WIFI_LOG_ERROR("Error in getting supported bands.. Null string\n");
         return RETURN_ERR;
     }
     // Check if the client is Dual band supported
@@ -898,14 +963,14 @@ INT wifi_getRadioSupportedFrequencyBands(INT radioIndex, CHAR *output_string) {
             } else if(strstr(return_buf,"Mode[B]") != NULL || strstr(return_buf,"Mode[G]") != NULL) {
                 snprintf(output_string, 64, "2.4GHz");
             } else {
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in getting supported bands- Unable to get Freq Modes\n");
+                WIFI_LOG_ERROR("Error in getting supported bands- Unable to get Freq Modes\n");
             }
         } else {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in getting supported bands- Unable to Channel Capability\n");
+            WIFI_LOG_ERROR("Error in getting supported bands- Unable to Channel Capability\n");
         }
         pthread_mutex_unlock(&wpa_sup_lock);
     }
-    RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR,"[%s:%d] SupportedFrequencyBands - %s\n",__FUNCTION__,__LINE__,output_string);
+    WIFI_LOG_DEBUG("[%s:%d] SupportedFrequencyBands - %s\n",__FUNCTION__,__LINE__,output_string);
     return RETURN_OK;
 }
 
@@ -916,7 +981,7 @@ INT wifi_getRadioOperatingFrequencyBand(INT radioIndex, CHAR *output_string) {
     int frequency = 0;
 
     if(!output_string) {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in getting supported bands.. Null string\n");
+        WIFI_LOG_ERROR("Error in getting supported bands.. Null string\n");
         return RETURN_ERR;
     }
     if (RETURN_OK == wifi_getRadioSignalParameter ("FREQUENCY", frequency_string) &&
@@ -928,11 +993,11 @@ INT wifi_getRadioOperatingFrequencyBand(INT radioIndex, CHAR *output_string) {
         } else if (band == 2) {
             snprintf(output_string, 64, "2.4GHz");
         } else {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"[%s:%d] Failure in getting OperatingFrequencyBand \n",__FUNCTION__,__LINE__);
+            WIFI_LOG_ERROR("[%s:%d] Failure in getting OperatingFrequencyBand \n",__FUNCTION__,__LINE__);
             retStatus = RETURN_ERR;
         }
     } else {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"[%s:%d] Failure in getting OperatingFrequencyBand - Failed to get Frequency\n",__FUNCTION__,__LINE__);
+        WIFI_LOG_ERROR("[%s:%d] Failure in getting OperatingFrequencyBand - Failed to get Frequency\n",__FUNCTION__,__LINE__);
         retStatus = RETURN_ERR;
     }
     return retStatus;
@@ -968,7 +1033,7 @@ INT wifi_getRadioStandard(INT radioIndex, CHAR *output_string, BOOL *gOnly, BOOL
              snprintf(output_string, 64,"a,n,ac");
              ret = RETURN_OK;
         } else {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Invalid frequency band, Failure in getting Operating standard.\n");
+            WIFI_LOG_ERROR("Invalid frequency band, Failure in getting Operating standard.\n");
         }
     }
     if(gOnly != NULL) *gOnly = false;
@@ -1021,7 +1086,7 @@ INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string) {
     }
     else 
     {
-       RDK_LOG( RDK_LOG_ERROR,LOG_NMGR,"Error in getting channel capability.\n");
+       WIFI_LOG_ERROR("Error in getting channel capability.\n");
        pthread_mutex_unlock (&wpa_sup_lock);
        return RETURN_ERR;
     }
@@ -1060,7 +1125,7 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
     wifi_getRadioIfName(radioIndex, interfaceName);
     if(interfaceName[0] == '\0')
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unable to get wireless interface name, Get bandwidth failed \n");
+        WIFI_LOG_ERROR("Unable to get wireless interface name, Get bandwidth failed \n");
         return ret;
     }
     snprintf(cmd,sizeof(cmd),"iw dev %s info | grep channel | cut -f 2 -d ','",interfaceName);
@@ -1072,28 +1137,28 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
             sscanf(resultBuff,"%*s%d%*s",&bandWidth);    /* Expected output :-  " width: 80 MHz" */
             if(bandWidth != 0) {
                 snprintf(output_string, 64, "%dMHz",bandWidth);
-                RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: OperatingChannelBandwidth =  %s\n",output_string);
+                WIFI_LOG_INFO("OperatingChannelBandwidth =  %s\n",output_string);
                 ret = RETURN_OK;
             } else {
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in getting bandwidth \n");
+                WIFI_LOG_ERROR("Failure in getting bandwidth \n");
             }
         }
         else
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Unable to read Channel width from iw \n");
+            WIFI_LOG_ERROR("Unable to read Channel width from iw \n");
             iw_info_failed=true;
         }
         pclose(fp);
     }
     else
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: popen() failed. failure in getting Channel Bandwidth\n");
+        WIFI_LOG_ERROR("popen() failed. failure in getting Channel Bandwidth\n");
         iw_info_failed=true;
     }
 
     if(true == iw_info_failed) //iw info fallback
     {
-       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: iw info command failed, fall back to iw link command\n");
+       WIFI_LOG_INFO("iw info command failed, fall back to iw link command\n");
        
        memset(cmd,0,sizeof(cmd));
        memset(resultBuff,0,sizeof(resultBuff));
@@ -1117,22 +1182,22 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
                }
                if (true == bandwidth_found)
 	       {
-                   RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: OperatingChannelBandwidth =  %s\n",output_string);
+                   WIFI_LOG_INFO("OperatingChannelBandwidth =  %s\n",output_string);
                    ret = RETURN_OK;   
 	       }
 	       else
                {
-                    RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL:MHz information missing in iw link o/p \n");
+                    WIFI_LOG_ERROR("MHz information missing in iw link o/p \n");
                }
            }
            else
            {
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in getting bandwidth \n");
+                WIFI_LOG_ERROR("Failure in getting bandwidth \n");
            }				
        }
        else
        {
-          RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: popen() failed. failure in getting Channel Bandwidth\n");
+          WIFI_LOG_ERROR("popen() failed. failure in getting Channel Bandwidth\n");
        }
 
     }
@@ -1149,12 +1214,12 @@ INT wifi_getSSIDName(INT apIndex, CHAR *output_string) {
         char *ssid = getValue(return_buf, "\nssid"); // include '\n' to avoid a match with "bssid"
         if (ssid == NULL)
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR, "%s: ssid not found in STATUS output\n", __FUNCTION__);
+            WIFI_LOG_ERROR( "%s: ssid not found in STATUS output\n", __FUNCTION__);
         }
         else
         {
             // TODO: assumes 'output_string' is at least MAX_SSID_LEN+1 big. wifi_getSSIDName needs 'max_len' 3rd arg to avoid assumption.
-            printf_decode (output_string, MAX_SSID_LEN+1, ssid);
+            printf_decode ((u8*)output_string, MAX_SSID_LEN+1, ssid);
             ret = RETURN_OK;
         }
         pthread_mutex_unlock(&wpa_sup_lock);
@@ -1191,7 +1256,7 @@ exit_err:
 
 INT wifi_getSSIDMACAddress(INT ssidIndex, CHAR *output_string) {
     
-    char *ptr, *bssid;
+    char *bssid;
     
     pthread_mutex_lock(&wpa_sup_lock);
     wpaCtrlSendCmd("STATUS");
@@ -1228,7 +1293,7 @@ static INT wifi_getRadioSignalParameter (const CHAR* parameter, CHAR *output_str
     }
     pthread_mutex_unlock (&wpa_sup_lock);
 
-    RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR, "[%s] return code = [%d], parameter = [%s], parameter_value = [%s]\n",
+    WIFI_LOG_DEBUG( "[%s] return code = [%d], parameter = [%s], parameter_value = [%s]\n",
             __FUNCTION__, ret, parameter, parameter_value ? parameter_value : "NULL");
     return ret;
 }
@@ -1289,9 +1354,9 @@ static int wifi_openWpaSupConnection()
     wpa_ctrl_close(g_wpa_ctrl);
     g_wpa_ctrl = wpa_ctrl_open(WPA_SUP_CTRL);
     if(NULL != g_wpa_ctrl) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_supplicant control connection opened successfuly. \n");
+        WIFI_LOG_INFO("wpa_supplicant control connection opened successfuly. \n");
     } else{
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in opening wpa_supplicant control connection.\n");
+        WIFI_LOG_ERROR("Failure in opening wpa_supplicant control connection.\n");
         pthread_mutex_unlock(&wpa_sup_lock);
         return retStatus;
     }
@@ -1302,26 +1367,26 @@ static int wifi_openWpaSupConnection()
     wpa_ctrl_close(g_wpa_monitor);
     g_wpa_monitor = wpa_ctrl_open(WPA_SUP_CTRL);
     if(NULL != g_wpa_monitor) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_supplicant monitor connection opened successfuly. \n");
+        WIFI_LOG_INFO("wpa_supplicant monitor connection opened successfuly. \n");
         if ( wpa_ctrl_attach(g_wpa_monitor) != 0) {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpa_ctrl_attach failed \n");
+            WIFI_LOG_ERROR("wpa_ctrl_attach failed \n");
         } else {
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Monitor connection Attached Successfully. \n");
+            WIFI_LOG_INFO("Monitor connection Attached Successfully. \n");
             retStatus = 0;
         }
     } else{
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Failure in opening wpa_supplicant monitor connection.\n");
+        WIFI_LOG_ERROR("Failure in opening wpa_supplicant monitor connection.\n");
     }
     pthread_mutex_unlock(&wpa_sup_lock);
     return retStatus;
 }
-void monitor_wpa_health()
+void* monitor_wpa_health(void* param)
 {
     int retStatus = -1;
     int printInterval = 0;
     int pingCount = 0;
-    int openStatus = -1;
     int pingRecoveryCount = 0;
+    (void)param;
 
     while(true)
     {
@@ -1330,7 +1395,7 @@ void monitor_wpa_health()
         {
             if(printInterval >= 4)
             {
-                RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_supplicant heartbeat success. \n");
+                WIFI_LOG_INFO("wpa_supplicant heartbeat success. \n");
                 printInterval = 0;
             }
             else
@@ -1338,17 +1403,17 @@ void monitor_wpa_health()
         }
         else
         { 
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpa_supplicant heartbeat failed, Reason: %s \n",retStatus==-1?"No response.":"Command failure.");
+            WIFI_LOG_ERROR("wpa_supplicant heartbeat failed, Reason: %s \n",retStatus==-1?"No response.":"Command failure.");
             pingCount = 0;
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Trying for 5 continues pings...\n");
+            WIFI_LOG_INFO("Trying for 5 continues pings...\n");
             while(pingCount < 5)
             {
                 retStatus = wifi_getWpaSupplicantStatus();
                 if(!retStatus) {
-                    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_supplicant heartbeat success. , Breaking Ping attempts\n");
+                    WIFI_LOG_INFO("wpa_supplicant heartbeat success. , Breaking Ping attempts\n");
                     // If the connection is alternatively failing for 3 times, Then it seems like an inconsistent connection, Lets reopen a new control connection. 
                     if(pingRecoveryCount >= 2) {
-                        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: wpa_supplicant heartbeat - inconsistent control connection: Reopen new one.\n");
+                        WIFI_LOG_INFO("wpa_supplicant heartbeat - inconsistent control connection: Reopen new one.\n");
                         wifi_openWpaSupConnection();
                         pingRecoveryCount = 0;
                     } else {
@@ -1357,12 +1422,12 @@ void monitor_wpa_health()
                     break; // Got one Success lets break
                 }
                 else
-                    RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: wpa_supplicant heartbeat failed, Reason: %s, Attempt = %d\n",retStatus==-1?"No response.":"Command failure.",pingCount+1);
+                    WIFI_LOG_ERROR("wpa_supplicant heartbeat failed, Reason: %s, Attempt = %d\n",retStatus==-1?"No response.":"Command failure.",pingCount+1);
                 pingCount++;
                 sleep(3);
             }
             if(pingCount >= 5) {
-                 RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Heartbeat failed for all attempts, Trying to reopen Connection.\n");
+                 WIFI_LOG_INFO("Heartbeat failed for all attempts, Trying to reopen Connection.\n");
                  wifi_openWpaSupConnection();
             }
         }
@@ -1389,7 +1454,7 @@ INT wifi_getRadioChannel(INT radioIndex,ULONG *output_ulong) {
         ret = RETURN_OK;
     }
 
-    RDK_LOG( RDK_LOG_DEBUG, LOG_NMGR, "[%s] return code = [%d], Channel Spec: %lu\n", __FUNCTION__, ret, *output_ulong);
+    WIFI_LOG_DEBUG( "[%s] return code = [%d], Channel Spec: %lu\n", __FUNCTION__, ret, *output_ulong);
     return ret;
 }
 
@@ -1407,7 +1472,7 @@ INT wifi_getSSIDNumberOfEntries(ULONG *output) {
     }
 
     *output = 1;
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: SSID entries:1\n");
+    WIFI_LOG_INFO("SSID entries:1\n");
     return RETURN_OK;
 
 }
@@ -1425,7 +1490,7 @@ INT wifi_getRadioTrafficStats(INT radioIndex, wifi_radioTrafficStats_t *output_s
     char* ptr = NULL;
 
     if(!output_struct) {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"output struct is null");
+        WIFI_LOG_INFO("output struct is null");
         return 0;
     }
 
@@ -1444,7 +1509,7 @@ INT wifi_getRadioTrafficStats(INT radioIndex, wifi_radioTrafficStats_t *output_s
             numParams = sscanf( resultBuff," %[^:]: %lld %lld %lld %lld %*u %*u %*u %*u %lld %lld %lld %lld %*u %*u %*u %*u",interfaceName, &rx_bytes, &rx_packets,&rx_err,&rx_drop,&tx_bytes,&tx_packets,&tx_err,&tx_drop );
             if(numParams != 9)
             {
-                RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in parsing Radio Stats params \n");
+                WIFI_LOG_ERROR("Error in parsing Radio Stats params \n");
             }
             output_struct->radio_PacketsSent = tx_packets;
             output_struct->radio_PacketsReceived = rx_packets;
@@ -1454,17 +1519,17 @@ INT wifi_getRadioTrafficStats(INT radioIndex, wifi_radioTrafficStats_t *output_s
             output_struct->radio_ErrorsSent = tx_err;
             output_struct->radio_DiscardPacketsSent = tx_drop;
             output_struct->radio_DiscardPacketsReceived = rx_drop;
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"[tx_packets = %lld] [rx_packets =  %lld] [tx_bytes = %lld] [rx_bytes = %lld] [rx_err = %lld] [tx_err = %lld] [tx_drop = %lld] [rx_drop = %lld] \n",tx_packets,rx_packets,tx_bytes,rx_bytes,rx_err,tx_err,tx_drop,rx_drop);
+            WIFI_LOG_INFO("[tx_packets = %lld] [rx_packets =  %lld] [tx_bytes = %lld] [rx_bytes = %lld] [rx_err = %lld] [tx_err = %lld] [tx_drop = %lld] [rx_drop = %lld] \n",tx_packets,rx_packets,tx_bytes,rx_bytes,rx_err,tx_err,tx_drop,rx_drop);
         }
         else
         {
-            RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in reading /proc/net/dev file \n");
+            WIFI_LOG_ERROR("Error in reading /proc/net/dev file \n");
         }
         pclose(fp);
     }
     else
     {
-        RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in popen() : Opening /proc/net/dev failed \n");
+        WIFI_LOG_ERROR("Error in popen() : Opening /proc/net/dev failed \n");
     }
     pthread_mutex_lock(&wpa_sup_lock);
     wpaCtrlSendCmd("SIGNAL_POLL");
@@ -1473,11 +1538,11 @@ INT wifi_getRadioTrafficStats(INT radioIndex, wifi_radioTrafficStats_t *output_s
     {
         noise = atoi(ptr);
         output_struct->radio_NoiseFloor = noise;
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"\n noise = %d ",noise);
+        WIFI_LOG_INFO("\n noise = %d ",noise);
     }
     else
     {
-        RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Noise is not available in siganl poll \n");
+        WIFI_LOG_INFO("Noise is not available in siganl poll \n");
     }
     pthread_mutex_unlock(&wpa_sup_lock);
     return RETURN_OK;
@@ -1485,7 +1550,7 @@ INT wifi_getRadioTrafficStats(INT radioIndex, wifi_radioTrafficStats_t *output_s
 
 INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool) {
     *output_bool = (g_wpa_monitor != NULL);
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"The radio is %s\n", g_wpa_monitor ? "enabled" : "not enabled");
+    WIFI_LOG_INFO("The radio is %s\n", g_wpa_monitor ? "enabled" : "not enabled");
     return RETURN_OK;
 }
 
@@ -1499,7 +1564,7 @@ INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
     char *ptr = NULL;
 
     if(!output_string){
-       RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"WIFI_HAL: Output_string is null\n");
+       WIFI_LOG_ERROR("Output_string is null\n");
        return ret;
     }
 
@@ -1523,12 +1588,12 @@ INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
                 strcpy(output_string,"UP");
             }
             ret = RETURN_OK;
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"\n WPA State : %s, Radio State :%s ",radio_status,output_string);
+            WIFI_LOG_INFO("\n WPA State : %s, Radio State :%s ",radio_status,output_string);
         }
         else
         {
             ret = RETURN_ERR;
-            RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Radio State is not available in wpa_cli STATUS \n");
+            WIFI_LOG_INFO("Radio State is not available in wpa_cli STATUS \n");
         }
     }
     else      // alternate method for getting wlan0 status
@@ -1546,19 +1611,19 @@ INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
                 strcpy(output_string, "UP");
              else if (strcmp(radio_status,"down") == 0)
                 strcpy(output_string, "DOWN");
-             RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"The radio is %s \n",output_string);
+             WIFI_LOG_INFO("The radio is %s \n",output_string);
              ret = RETURN_OK;
           }
           else
           {
-             RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in executing `cat /sys/class/net/wlan0/operstate`  parsing \n");
+             WIFI_LOG_ERROR("Error in executing `cat /sys/class/net/wlan0/operstate`  parsing \n");
              ret = RETURN_ERR;
           }
           pclose(fp);
        }
        else
        {
-          RDK_LOG( RDK_LOG_ERROR, LOG_NMGR,"Error in popen() of sys/class/net/wlan0/operstate : %s \n",__FUNCTION__);
+          WIFI_LOG_ERROR("Error in popen() of sys/class/net/wlan0/operstate : %s \n",__FUNCTION__);
           ret=RETURN_ERR;
        }
     }
@@ -1568,15 +1633,15 @@ INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
 INT wifi_getRegulatoryDomain(INT radioIndex, CHAR* output_string){
     int ret = RETURN_ERR;
     if(!output_string){
-       RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: Output_string is null\n");
+       WIFI_LOG_INFO("Output_string is null\n");
        return ret;
     }
     pthread_mutex_lock(&wpa_sup_lock);
     int status = wpaCtrlSendCmd("GET COUNTRY");
 
     if(status == 0 && return_buf[0] != '\0'){
-       snprintf(output_string, 4, "%s", return_buf);
-       ret = RETURN_OK;
+       if(snprintf(output_string, 4, "%s", return_buf) >= 0)
+           ret = RETURN_OK;
     }
     else{
         ret = RETURN_ERR;
@@ -1587,13 +1652,13 @@ INT wifi_getRegulatoryDomain(INT radioIndex, CHAR* output_string){
 
 INT wifi_getRadioMaxBitRate(INT radioIndex, CHAR *output_string) {
     
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: MaxBitRate information will be implemented\n");
+    WIFI_LOG_INFO("MaxBitRate information will be implemented\n");
     return RETURN_ERR;
 }
 
 INT wifi_getRadioMCS(INT radioIndex, INT *output_INT){
     
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"WIFI_HAL: MCS could not be determined\n");
+    WIFI_LOG_INFO("MCS could not be determined\n");
     return RETURN_ERR;
 }
 
@@ -1604,7 +1669,7 @@ char *bufPtr=NULL;
 char *ptrToken;   
 
     if(!output_struct) {
-      RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"output struct is null");
+      WIFI_LOG_INFO("output struct is null");
       return 0;
     }
     system("wl counter > /tmp/wlparam.txt");
@@ -1618,19 +1683,19 @@ char *ptrToken;
             {
                 ptrToken = strtok (NULL, " \t\n");
                 output_struct->ssid_MulticastPacketsSent=strtoull(ptrToken, NULL, 10);
-                RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"\n txdatamcast = %llu ",strtoull(ptrToken, NULL, 10));
+                WIFI_LOG_INFO("\n txdatamcast = %llu ",strtoull(ptrToken, NULL, 10));
             }
             else if (strcmp(ptrToken, "txdatabcast") == 0)
             {
                 ptrToken = strtok (NULL, " \t\n");
                 output_struct->ssid_BroadcastPacketsSent=strtoull(ptrToken, NULL, 10);
-                RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"\n txdatabcast = %llu ",strtoull(ptrToken, NULL, 10));
+                WIFI_LOG_INFO("\n txdatabcast = %llu ",strtoull(ptrToken, NULL, 10));
             }
             else if (strcmp(ptrToken, "txnoack") == 0)
             {
                 ptrToken = strtok (NULL, " \t\n");
                 output_struct->ssid_ACKFailureCount=strtoull(ptrToken, NULL, 10);
-                RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"\n txnoack  = %llu ",strtoull(ptrToken, NULL, 10));
+                WIFI_LOG_INFO("\n txnoack  = %llu ",strtoull(ptrToken, NULL, 10));
             }
             else
             {
@@ -1652,14 +1717,14 @@ char *ptrToken;
 
 INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) {
 
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"Extension channel is Auto\n");
+    WIFI_LOG_INFO("Extension channel is Auto\n");
     strcpy(output_string, "Auto");
     return RETURN_OK;
 }
 
 /***************Stubbed out functions**********************/
 INT wifi_getRadioNumberOfEntries(ULONG *output) {
-    RDK_LOG( RDK_LOG_INFO, LOG_NMGR,"The radio number of entries is always 1\n");
+    WIFI_LOG_INFO("The radio number of entries is always 1\n");
     *output = 1;
     return RETURN_OK;
 }

@@ -16,24 +16,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 ##########################################################################
-SUBDIRS = gtest
-DIST_SUBDIRS = gtest
 
-
-# additional include pathes necessary to compile the C/C++ library
 AM_CFLAGS = -I$(top_srcdir)/include 
+AM_LDFLAGS = -lgtest -lpthread
+check_PROGRAMS = wifi_gtest_suite
+wifi_gtest_suite_SOURCES = gtest_main.cpp parser.cpp
+wifi_gtest_suite_LDADD = $(top_builddir)/src/libwifihal.la 
 
-###############################################################################
-# THE LIBRARIES TO BUILD
-###############################################################################
-
-# the Binary names to test build 
-bin_PROGRAMS = testwifi
-
-testwifi_LDADD = $(top_builddir)/src/libwifihal.la 
-
-AM_LDFLAGS = -lpthread
-
-# the sources to add to the library and to add to the source distribution
-testwifi_SOURCES=testwifi.c
-
+TESTS = wifi_gtest_suite
+TEST_SUITE_LOG = wifi_gtest_suite.log
+TESTS_ENVIRONMENT = export GTEST_OUTPUT="xml:wifi_gtest_suite.xml";

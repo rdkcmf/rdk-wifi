@@ -33,6 +33,10 @@ AC_PROG_CC
 # Checks for header files.
 AC_CHECK_HEADERS([stdio.h stdlib.h unistd.h])
 
+# Rdklogger
+AC_ARG_WITH([rdklogger], [AS_HELP_STRING([--without-rdklogger], [disable support for rdklogger])],[],[with_rdklogger=yes])
+AM_CONDITIONAL([WITH_RDKLOGGER], [test "x$with_rdklogger" != xno])
+
 # Enable wifi client Roaming
 WIFI_CLIENT_ROAMING=" "
 AC_ARG_ENABLE([client_roaming],
@@ -52,5 +56,5 @@ AC_SUBST(WIFI_CLIENT_ROAMING)
 AC_CHECK_HEADER_STDBOOL
 # Checks for library functions.
 AC_FUNC_ERROR_AT_LINE
-AC_CONFIG_FILES([Makefile src/Makefile test/Makefile])
+AC_CONFIG_FILES([Makefile src/Makefile test/Makefile test/gtest/Makefile])
 AC_OUTPUT
