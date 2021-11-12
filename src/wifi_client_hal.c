@@ -167,6 +167,7 @@ BOOL bNoAutoScan=FALSE;
 char bUpdatedSSIDInfo=1;
 BOOL bIsWpsCompleted = TRUE;
 BOOL bIsPBCOverlapDetected = FALSE;
+BOOL bWpsPBC = FALSE;
 
 /* Initialize the state of the supplicant */
 WIFI_HAL_WPA_SUP_STATE cur_sup_state = WIFI_HAL_WPA_SUP_STATE_IDLE;
@@ -296,6 +297,27 @@ static int find_ssid_in_scan_results(const char* ssid)
     return found;
 }
 
+static BOOL wpa_supplicant_conf_reset()
+{
+    WIFI_LOG_INFO("Deleting conf file and making a new one\n");
+
+    if (remove("/opt/secure/wifi/wpa_supplicant.conf") == 0)
+    {
+        WIFI_LOG_INFO("Removed File\n");
+    }
+    FILE *fp;
+    fp = fopen("/opt/secure/wifi/wpa_supplicant.conf", "w");
+    if (fp == NULL)
+    {
+        WIFI_LOG_INFO("Error in opening configuration file\n");
+        return false;
+    }
+    fprintf(fp, "ctrl_interface=/var/run/wpa_supplicant\n");
+    fprintf(fp, "update_config=1\n");
+    fclose(fp);
+    return true;
+}
+
 /******************************/
 
 /*********Callback thread to send messages to Network Service Manager *********/
@@ -410,6 +432,7 @@ void* monitor_thread_task(void *param)
 
                 else if(strstr(start, WPS_EVENT_TIMEOUT) != NULL) {
                     WIFI_LOG_INFO("WPS Connection timeout\n");
+                    bIsWpsCompleted = TRUE;
                     connError = WIFI_HAL_ERROR_NOT_FOUND;
                     if (callback_disconnect) (*callback_disconnect)(1, "", &connError);
                 }
@@ -431,7 +454,7 @@ void* monitor_thread_task(void *param)
 
                 else if(strstr(start, WPS_EVENT_SUCCESS) != NULL) {
                     bIsWpsCompleted = TRUE;
-		    bNoAutoScan = FALSE;//Setting bNoAutoScan as FALSE since WPS is successful
+                    bNoAutoScan = FALSE;//Setting bNoAutoScan as FALSE since WPS is successful
                     WIFI_LOG_INFO("WPS is successful...Associating now\n");
                 }
 
@@ -783,7 +806,86 @@ INT wifi_getCliWpsConfigurationState(INT ssidIndex, CHAR *output_string){
   return RETURN_OK;
 }
 
-INT wifi_setCliWpsEnrolleePin(INT ssidIndex, CHAR *EnrolleePin){
+INT wifi_setCliWpsEnrolleePin(INT ssidIndex, CHAR *wps_pin){
+
+    WIFI_LOG_INFO("WPS Pin Call\n");
+
+    WIFI_LOG_DEBUG("wps_pin = %s\n", wps_pin);
+
+    bool command_failed;
+
+    if (wps_pin == NULL || *wps_pin == '\0') // NOTE: remove " || *wps_pin == '\0'" to allow PIN auto-generation
+    {
+        WIFI_LOG_ERROR("No PIN supplied.\n");
+        return RETURN_ERR;
+    }
+
+    if (*wps_pin) // if PIN is supplied, validate it
+    {
+        pthread_mutex_lock(&wpa_sup_lock);
+        sprintf(cmd_buf, "WPS_CHECK_PIN %s", wps_pin);
+        // on success, return_buf contains supplied PIN.
+        // on failure, return_buf contains "FAIL" if PIN is not 8 digits, "FAIL-CHECKSUM" otherwise (last digit != checksum of first 7 digits).
+        command_failed = true;
+        if (0 == wpaCtrlSendCmd(cmd_buf))
+        {
+            if (strncmp(return_buf, "FAIL", 4) == 0)
+                WIFI_LOG_ERROR("command '%s' returned '%s'\n", cmd_buf, return_buf);
+            else
+                command_failed = false;
+        }
+        pthread_mutex_unlock(&wpa_sup_lock);
+        if (command_failed)
+            return RETURN_ERR;
+    }
+
+    pthread_mutex_lock(&wpa_sup_lock);
+    if (cur_sup_state != WIFI_HAL_WPA_SUP_STATE_IDLE)
+    {
+        pthread_mutex_unlock(&wpa_sup_lock);
+        WIFI_LOG_INFO("Connection is in progress, returning error \n");
+        return RETURN_ERR;
+    }
+
+    isPrivateSSID = 1;
+    wpaCtrlSendCmd("REMOVE_NETWORK 0");
+    wpaCtrlSendCmd("SAVE_CONFIG");
+    bUpdatedSSIDInfo = 1;
+
+    //Trigger wps_pin
+    bIsWpsCompleted = FALSE;
+    sprintf(cmd_buf, "WPS_PIN any"); // the "any" is case-sensitive ("ANY" does not work)
+    if (*wps_pin)
+    {
+        strcat(cmd_buf, " ");
+        strcat(cmd_buf, wps_pin);
+    }
+    // on success, return_buf contains the PIN used for WPS negotiation with AP
+    // on failure, return_buf starts with "FAIL..."
+    command_failed = true;
+    if (0 == wpaCtrlSendCmd(cmd_buf))
+    {
+        if (strncmp(return_buf, "FAIL", 4) == 0)
+            WIFI_LOG_ERROR("command '%s' returned '%s'\n", cmd_buf, return_buf);
+        else
+        {
+            command_failed = false;
+            if (*wps_pin == '\0')
+                strncat (wps_pin, return_buf, 8); // copy auto-generated PIN from return_buf into wps_pin
+        }
+    }
+    pthread_mutex_unlock(&wpa_sup_lock);
+    if (command_failed)
+        return RETURN_ERR;
+
+    WIFI_LOG_INFO("Will be timing out if AP is not found after 120 seconds\n");
+
+    if (false == wpa_supplicant_conf_reset())
+        return RETURN_ERR;
+
+    wifiStatusCode_t connError = WIFI_HAL_CONNECTING;
+    (*callback_connect)(1, "", &connError);
+    WIFI_LOG_INFO("Connection in progress..\n");
 
  #if 0
   INT* pinValue = 0;
@@ -795,7 +897,7 @@ INT wifi_setCliWpsEnrolleePin(INT ssidIndex, CHAR *EnrolleePin){
   WIFI_LOG_INFO("Error connecting to device with enrollee pin... Check again\n");
   return RETURN_ERR;
 #endif 
-return RETURN_OK; 
+    return RETURN_OK;
 }
 
 // Parse Scan results and fetch all WPS-PBC enabled accesspoints
@@ -872,7 +974,7 @@ void stop_wifi_wps_connection()
     if(bIsWpsCompleted == FALSE)
     {
         WIFI_LOG_INFO("Stopping  WPS operation.. \n");
-        if(isDualBandSupported())
+        if (bWpsPBC && isDualBandSupported())
             pthread_cancel(wps_start_thread); // Lets forcefully stop the thread as we need to strictly maintain WPS time frame
 
         // Make sure that the mutex is not locked by wps thread & Cancel WPS operation
@@ -1058,11 +1160,13 @@ void* start_wifi_wps_connection(void *param)
     return NULL;
 }
 
+
 INT wifi_setCliWpsButtonPush(INT ssidIndex){
  
   WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
   
   WIFI_LOG_INFO("WPS Push Button Call\n");
+  bWpsPBC = true;
   
   pthread_mutex_lock(&wpa_sup_lock);
   
@@ -1097,21 +1201,8 @@ INT wifi_setCliWpsButtonPush(INT ssidIndex){
 
   WIFI_LOG_INFO("Will be timing out if AP not found after 120 seconds\n");
 
-  WIFI_LOG_INFO("Deleting conf file and making a new one\n");
-
-  if(remove("/opt/secure/wifi/wpa_supplicant.conf") == 0){
-    WIFI_LOG_INFO("Removed File\n");
-  }
-
-  FILE* fp;
-  fp = fopen("/opt/secure/wifi/wpa_supplicant.conf", "w");
-  if(fp == NULL){
-    WIFI_LOG_INFO("Error in opening configuration file\n");
-    return RETURN_ERR;
-  }
-  fprintf(fp, "ctrl_interface=/var/run/wpa_supplicant\n");
-  fprintf(fp, "update_config=1\n");
-  fclose(fp);
+  if (false == wpa_supplicant_conf_reset())
+      return RETURN_ERR;
 
   wifiStatusCode_t connError;
   connError = WIFI_HAL_CONNECTING;
