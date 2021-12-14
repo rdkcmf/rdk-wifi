@@ -803,8 +803,8 @@ INT parse_scan_results(char *buf, size_t len)
         delim_ptr=strchr(ptr, '\n');
         *delim_ptr = '\0'; // alters the buffer passed in; put back the '\n' after printf_decode, if this is a problem
         printf_decode ((u8*)ap_list[count].ap_SSID, 64, ptr);
-        WIFI_LOG_DEBUG("decoded SSID=%s (encoded SSID=%s) flags=%s SecuritymodeEnabled=%s EncryptionMode=%s\n",
-                ap_list[count].ap_SSID, ptr, flags, ap_list[count].ap_SecurityModeEnabled, ap_list[count].ap_EncryptionMode);
+        WIFI_LOG_INFO("decoded SSID=%s (encoded SSID=%s) BSSID=%s flags=%s SecuritymodeEnabled=%s EncryptionMode=%s\n",
+                ap_list[count].ap_SSID, ptr, ap_list[count].ap_BSSID, flags, ap_list[count].ap_SecurityModeEnabled, ap_list[count].ap_EncryptionMode);
         // *delim_ptr='\n'; // put back the '\n' after printf_decode
 
         ptr = delim_ptr + 1;
