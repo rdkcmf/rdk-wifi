@@ -32,6 +32,7 @@
 #define MAX_SSID_LEN        32           /* Maximum SSID name */
 #define MAX_VERSION_LEN     16          /* Maximum Version Len */
 #define BUFF_LEN_1024       1024
+#define BUFF_LEN_64         64
 #define WIFI_DEFAULT_INTERFACE "wlan0"
 extern BOOL bNoAutoScan;
 
@@ -1004,11 +1005,29 @@ INT wifi_getRadioOperatingFrequencyBand(INT radioIndex, CHAR *output_string) {
 }
 
 INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) {
+
+    FILE *fp = NULL;
+    char cmd[BUFF_LEN_64];
+    char result[BUFF_LEN_64];
+
     if (!output_string) {
         return RETURN_ERR;
     }
+
     snprintf(output_string, 64, (radioIndex==0)?"b,g,n":"a,n,ac");
-    return RETURN_OK;
+    memset(cmd,0,sizeof(cmd));
+    memset(result,0,sizeof(result));
+
+    snprintf(cmd,sizeof(cmd),"iw phy | grep 'HE Iftypes'| tr '\n' ' '");
+    fp = popen(cmd,"r");
+
+    if (fp != NULL)
+    {
+      (fgets(result, sizeof(result), fp) != NULL) && (strstr(result,"HE Iftypes") != NULL) && (snprintf(output_string, 64, (radioIndex==0)?"b,g,n,ax":"a,n,ac,ax"));
+       pclose(fp);
+     }
+     return RETURN_OK;
+
 }
 
 INT wifi_getRadioStandard(INT radioIndex, CHAR *output_string, BOOL *gOnly, BOOL *nOnly, BOOL *acOnly) {
