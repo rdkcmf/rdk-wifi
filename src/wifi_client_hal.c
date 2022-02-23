@@ -31,6 +31,14 @@
 #include <errno.h>
 #include "cJSON.h"
 #endif
+#include <stdarg.h>
+#include <sys/time.h>
+//This call back will be invoked when client automatically connect to AP.
+
+wifi_connectEndpoint_callback callback_connect = NULL;
+
+//This call back will be invoked when client lost the connection to AP.
+wifi_disconnectEndpoint_callback callback_disconnect;
 
 #include <wpa_ctrl.h>
 
@@ -169,7 +177,7 @@ WIFI_HAL_WPA_SUP_STATE cur_sup_state = WIFI_HAL_WPA_SUP_STATE_IDLE;
 WIFI_HAL_WPA_SUP_SCAN_STATE cur_scan_state_from_supp = WIFI_HAL_WPA_SUP_SCAN_STATE_IDLE;
 extern WIFI_HAL_WPA_SUP_SCAN_STATE cur_scan_state;
 
-char event_buf[4096];                   /* Buffer to store the event results */
+static char event_buf[4096];                   /* Buffer to store the event results */
 bool stop_monitor;
 static int isPrivateSSID=1;                  /* Variable to check whether to save to conf file - Default value is 1 (Will save to conf file) */
 size_t event_buf_len;
@@ -636,7 +644,8 @@ void* monitor_thread_task(void *param)
                     WIFI_LOG_INFO( "SSID [%s] disabled for %ds (auth_failures=%d), reason=%s, connError [%d]\n",
                             ssid, duration, auth_failures, reason, connError);
 
-                    (*callback_connect) (1, ssid, &connError);
+                    if (callback_connect)
+                      (*callback_connect) (1, ssid, &connError);
                 }
 
                 else if (strstr (start, WPA_EVENT_REENABLED) != NULL) {
@@ -1332,7 +1341,12 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
         WIFI_LOG_INFO("Password may not be falling within spec\n");
         wifiStatusCode_t connError;
         connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
-        (*callback_connect)(1, AP_SSID, &connError);
+        if (callback_connect)
+          (*callback_connect)(1, AP_SSID, &connError);
+        else {
+          WIFI_LOG_ERROR("erorr connecting to BSS (%d), but user didn't supply callback\n",
+            connError);
+        }
         pthread_mutex_unlock(&wpa_sup_lock);
         if (!isPrivateSSID)
         {
@@ -2558,11 +2572,22 @@ int parse_neighbor_report_response(char *nbr_response,wifi_rrm_neighbor_report_t
    }
    return RETURN_OK;
 }
+#endif // WIFI_CLIENT_ROAMING
 
 WiFiHalStatus_t getwifiStatusCode()
 {
     return WIFISTATUS_HAL_COMPLETED;
 }
 
-#endif
+void wifi_printf(const char *level, const char *format, ...)
+{
+  va_list arg_list;
 
+  struct timeval now;
+  gettimeofday(&now, NULL);
+  printf("[%6s] %9ld.%06ld - ", level, now.tv_sec, now.tv_usec);
+
+  va_start(arg_list, format);
+  vprintf(format, arg_list);
+  va_end(arg_list);
+}

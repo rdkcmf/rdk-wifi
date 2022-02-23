@@ -28,12 +28,15 @@ AM_CFLAGS = -I$(top_srcdir)/include
 ###############################################################################
 
 # the Binary names to test build 
-bin_PROGRAMS = testwifi
+bin_PROGRAMS = testwifi switch_interfaces connect
 
 testwifi_LDADD = $(top_builddir)/src/libwifihal.la 
+switch_interfaces_LDADD = $(top_builddir)/src/libwifihal.la
+connect_LDADD = $(top_builddir)/src/libwifihal.la
 
-AM_LDFLAGS = -lpthread
+AM_LDFLAGS = -pthread
 
 # the sources to add to the library and to add to the source distribution
 testwifi_SOURCES=testwifi.c
-
+switch_interfaces_SOURCES=switch_interfaces.c
+connect_SOURCES=connect.c

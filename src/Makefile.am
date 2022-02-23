@@ -18,7 +18,7 @@
 ##########################################################################
 
 lib_LTLIBRARIES=libwifihal.la
-libwifihal_la_SOURCES=wifi_client_hal.c wifi_common_hal.c
+libwifihal_la_SOURCES=wifi_client_hal.c wifi_common_hal.c wifi_linux_wireless.c
 libwifihal_la_LDFLAGS=-lwpa_client
 
 AM_CFLAGS = 

@@ -21,19 +21,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 #include <net/if.h>
 #include <signal.h>
 #include <unistd.h>
 #include <wifi_common_hal.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <ifaddrs.h>
+
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+
 #include "wifi_log.h"
 
 #define MAX_SSID_LEN        32           /* Maximum SSID name */
 #define MAX_VERSION_LEN     16          /* Maximum Version Len */
 #define BUFF_LEN_1024       1024
 #define BUFF_LEN_64         64
-#define WIFI_DEFAULT_INTERFACE "wlan0"
 extern BOOL bNoAutoScan;
 
 ULONG ssid_number_of_entries = 0;
@@ -139,6 +144,17 @@ static struct _wifi_securityModes
     { NET_WIFI_SECURITY_WPA2_ENTERPRISE_AES,		"WPA2-ENTERPRISE, AES"		},
     { NET_WIFI_SECURITY_NOT_SUPPORTED, 		  	"Security format not supported" },
 };*/
+
+void wifi_usleep(useconds_t usec)
+{
+  // WIFI_LOG_INFO("wifi hal calling sleep:%uus\n", (uint32_t) usec);
+  if (usec >= 1000000) {
+    (void) sleep((unsigned int) (usec / 1000000));
+  }
+  else {
+    (void) usleep(usec);
+  }
+}
  
 INT is_null_pointer(char* str) {    //Check if passed string is a null pointer and empty string or not
     if ((str !=NULL) && (str[0]=='\0')) {
@@ -160,9 +176,6 @@ extern size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
 #define CA_CLIENT_CERT_PATH    "/opt/lnf/xi5device.cert.pem"
 #define CA_PRIVATE_KEY_PATH    "/opt/lnf/xi5device.key.pem"
 #define WPA_SUP_CONFIG         "/opt/secure/wifi/wpa_supplicant.conf"
-
-#define WPA_SUP_PIDFILE         "/var/run/wpa_supplicant/wlan0.pid"
-#define WPA_SUP_CTRL            "/var/run/wpa_supplicant/wlan0"
 
 #define WPA_SUP_TIMEOUT         7000   /* 7 msec */
 #define WPA_SUP_PING_INTERVAL   60 /* 1 min */
@@ -191,8 +204,16 @@ struct wpa_ctrl *g_wpa_monitor = NULL;
 WIFI_HAL_WPA_SUP_SCAN_STATE cur_scan_state = WIFI_HAL_WPA_SUP_SCAN_STATE_IDLE;
 pthread_mutex_t wpa_sup_lock;
 char cmd_buf[1024], return_buf[96*1024];
-char event_buf[4096];
 wifi_neighbor_ap_t ap_list[512];
+
+
+static wifi_context_t g_ctx;
+static void wifi_initContext(wifi_context_t * ctx, wifi_halConfig_t *conf);
+static bool wifi_interfaceExists(const char * ifname);
+bool wifi_interfaceIsWireless(const char * ifname);
+static void wifi_interfaceSetEnabled(const char * ifname, bool enabled);
+
+static char * wifi_readFile(const char * fname, bool sysfs);
 
 pthread_t monitor_thread;
 pthread_t wpa_health_mon_thread;
@@ -292,14 +313,14 @@ static INT getFrequencyListFor_Band(WIFI_HAL_FREQ_BAND band, char *output_string
     //wpa_cli get_capability freq
 }
 
-char* readFile(char *filename)
+char * wifi_readFile(const char * fname, bool sysfs)
 {
     FILE    *fp = NULL;
     char    *buf = NULL;
     long    fBytes = 0;
     long    freadBytes = 0; 
 
-    fp=fopen(filename,"r");
+    fp=fopen(fname,"r");
     if(fp==NULL)
     {
         WIFI_LOG_INFO("readFile(): File Open Error \n" );
@@ -318,7 +339,7 @@ char* readFile(char *filename)
             return NULL; 
         }
         freadBytes = fread(buf,sizeof(char),fBytes,fp);
-        if(freadBytes != fBytes) // Do we need to proceed on partial read.. ? Blocking for now.
+        if (!sysfs && (freadBytes != fBytes)) // Do we need to proceed on partial read.. ? Blocking for now.
         {
             WIFI_LOG_ERROR(" readFile(): Error occured during fread(), freadBytes= %ld  \n" ,freadBytes); 
             fclose(fp);
@@ -334,21 +355,22 @@ char* readFile(char *filename)
     return buf;
 }
 
-int interface_exists(char *interface) {
-
-    int found = 0;
+bool wifi_interfaceExists(const char * ifname)
+{
+    bool found = false;
     struct if_nameindex *ifp, *ifpsave;
 
     ifpsave = ifp = if_nameindex();
 
     if(!ifp){
         WIFI_LOG_DEBUG("if_nameindex call failed: %s\n", strerror(errno));
-        return 0;
+        return false;
     }
     while(ifp->if_index) {
-        WIFI_LOG_DEBUG("%d %s\n", ifp->if_index, ifp->if_name);
-        if (strcmp(ifp->if_name, interface) == 0) {
-            found = 1;
+        WIFI_LOG_DEBUG("comparing interface name '%s' with '%s' to check if exists\n",
+          ifp->if_name, ifname);
+        if (strcmp(ifp->if_name, ifname) == 0) {
+            found = true;
             break;
         }
         ifp++;
@@ -358,46 +380,56 @@ int interface_exists(char *interface) {
 }
 
 // Initializes the wifi subsystem (all radios)
-INT wifi_init() {
+INT wifi_init()
+{
+  return wifi_initWithConfig(NULL);
+}
+
+INT wifi_initWithConfig(wifi_halConfig_t *conf)
+{
     int retry = 0;
     stop_monitor=false;
     pthread_attr_t thread_attr;
     int ret;
+
+    wifi_initContext(&g_ctx, conf);
 
     WIFI_LOG_INFO("Initializing Generic WiFi hal.\n");
     if(init_done == true) {
        WIFI_LOG_INFO("Wifi init has already been done\n");
        return RETURN_OK;
     }
-    WIFI_LOG_INFO("TELEMETRY_WIFI_WPA_SUPPLICANT:ENABLED \n ");    
-   
-    // Starting wpa_supplicant service if it is not already started
-    WIFI_LOG_INFO("Starting wpa_supplicant service \n ");
-#ifndef RDKC
-    system("systemctl start wpa_supplicant");
-#else
-   system("/etc/init.d/wpa_supplicant.service restart");
-#endif
-   int x;
 
-   x = interface_exists(WIFI_DEFAULT_INTERFACE);
-   if(x)
+    WIFI_LOG_INFO("TELEMETRY_WIFI_WPA_SUPPLICANT:ENABLED \n");
+    // Starting wpa_supplicant service if it is not already started
+    WIFI_LOG_INFO("Starting wpa_supplicant service \n");
+
+    #ifndef RDKC
+    system("systemctl start wpa_supplicant");
+    #else
+    system("/etc/init.d/wpa_supplicant.service restart");
+    #endif
+
+   bool interfaceExists = wifi_interfaceExists(g_ctx.conf.wlan_Interface);
+   if(interfaceExists)
    {
 
         /* Starting wpa_supplicant may take some time, try 75 times before giving up */
         retry = 0;    
         while (retry++ < 75) {
-            g_wpa_ctrl = wpa_ctrl_open(WPA_SUP_CTRL);
+            WIFI_LOG_INFO("opening control path:%s\n", g_ctx.ctrl_path);
+            g_wpa_ctrl = wpa_ctrl_open(g_ctx.ctrl_path);
             if (g_wpa_ctrl != NULL) break;
             WIFI_LOG_INFO("ctrl_open returned NULL \n");
-            sleep(1);
+            wifi_usleep(1000000);
         }
 
         if (g_wpa_ctrl == NULL) {
             WIFI_LOG_INFO("wpa_ctrl_open failed for control interface \n");
             return RETURN_ERR;
         }
-        g_wpa_monitor = wpa_ctrl_open(WPA_SUP_CTRL);
+
+        g_wpa_monitor = wpa_ctrl_open(g_ctx.ctrl_path);
         if ( g_wpa_monitor == NULL ) {
             WIFI_LOG_INFO("wpa_ctrl_open failed for monitor interface \n");
             return RETURN_ERR;
@@ -439,8 +471,11 @@ INT wifi_init() {
 
        return RETURN_OK;
    }
-   else
-       return RETURN_ERR;
+  else {
+    WIFI_LOG_WARN("wireless interface %s doesn't exist\n",
+      g_ctx.conf.wlan_Interface);
+    return RETURN_ERR;
+  }
 }
 
 // Uninitializes wifi
@@ -463,7 +498,7 @@ INT wifi_uninit() {
 
     // adding a small sleep just to receive WPA_EVENT_DISCONNECTED
     // so that netsrvmgr can log a disconnected telemetry event
-    sleep (1);
+    wifi_usleep(1000000);
 
     if ((wpa_health_mon_thread) && ( pthread_cancel(wpa_health_mon_thread) == -1 )) {
         WIFI_LOG_ERROR( "[%s:%d] wpa health monitor thread cancel failed! \n",__FUNCTION__, __LINE__);
@@ -478,7 +513,18 @@ INT wifi_uninit() {
     system("systemctl stop wpa_supplicant");
 #else
     system("/etc/init.d/wpa_supplicant.service stop");
-#endif    
+#endif
+
+    if (g_wpa_ctrl) {
+      wpa_ctrl_close(g_wpa_ctrl);
+      g_wpa_ctrl = NULL;
+    }
+
+    if (g_wpa_monitor) {
+      wpa_ctrl_close(g_wpa_monitor);
+      g_wpa_monitor = NULL;
+    }
+
     init_done=false;
     return RETURN_OK;
 }
@@ -505,14 +551,29 @@ INT wifi_reset() {
     return RETURN_OK;
 }
 
-
 // turns off transmit power for the entire Wifi subsystem, for all radios
-INT wifi_down() {
+INT wifi_down()
+{
+  struct ifaddrs * addrs;
+  WIFI_LOG_INFO("bringing down all wireless interfaces\n");
 
-    WIFI_LOG_INFO("Bring the wlan interface down\n");
-    WIFI_LOG_INFO("Hardcoding the interface to wlan0 for now\n");
-    system("ifconfig wlan0 down");
-    return RETURN_OK;
+  if (getifaddrs(&addrs) == 0) {
+    struct ifaddrs * itr;
+    for (itr = addrs; itr; itr = itr->ifa_next) {
+      if (itr->ifa_addr == NULL || itr->ifa_addr->sa_family != AF_PACKET)
+        continue;
+      if (wifi_interfaceIsWireless(itr->ifa_name)) {
+        WIFI_LOG_INFO("bring down wireless interface %s", itr->ifa_name);
+        wifi_interfaceSetEnabled(itr->ifa_name, false);
+      }
+    }
+    freeifaddrs(addrs);
+  }
+  else {
+    WIFI_LOG_WARN("error trying to disable wireless interfaces. getifaddrs failed. %d", errno);
+  }
+
+  return RETURN_OK;
 }
 
 #if 1
@@ -846,7 +907,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult(INT radioIndex, wifi_neighbor_ap_t *
         if (strstr(return_buf, "FAIL-BUSY") != NULL) {
             WIFI_LOG_ERROR("Scan command returned %s .. waiting \n", return_buf);            
             wpaCtrlSendCmd("BSS_FLUSH 0");
-            sleep(1); 
+            wifi_usleep(1000000);
             wpaCtrlSendCmd("SCAN");
             if (strstr(return_buf, "FAIL-BUSY") != NULL) {
                 WIFI_LOG_ERROR("Scan command returned %s FAILED \n", return_buf);
@@ -858,7 +919,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult(INT radioIndex, wifi_neighbor_ap_t *
     }
     pthread_mutex_unlock(&wpa_sup_lock);
     while ((cur_scan_state !=  WIFI_HAL_WPA_SUP_SCAN_STATE_RESULTS_RECEIVED) &&(retry++ < 1000)) {
-        usleep(WPA_SUP_TIMEOUT);
+      wifi_usleep(WPA_SUP_TIMEOUT);
     }
     pthread_mutex_lock(&wpa_sup_lock);    
     if (cur_scan_state != WIFI_HAL_WPA_SUP_SCAN_STATE_RESULTS_RECEIVED) { 
@@ -1029,14 +1090,19 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) {
     memset(cmd,0,sizeof(cmd));
     memset(result,0,sizeof(result));
 
+    // TODO: this isn't going to work with multiple wlan interfaces
     snprintf(cmd,sizeof(cmd),"iw phy | grep 'HE Iftypes'| tr '\n' ' '");
     fp = popen(cmd,"r");
 
     if (fp != NULL)
     {
-      (fgets(result, sizeof(result), fp) != NULL) && (strstr(result,"HE Iftypes") != NULL) && (snprintf(output_string, 64, (radioIndex==0)?"b,g,n,ax":"a,n,ac,ax"));
-       pclose(fp);
-     }
+      if (fgets(result, sizeof(result), fp)) {
+        if (strstr(result,"HE Iftypes"))
+          snprintf(output_string, 64, (radioIndex==0)?"b,g,n,ax":"a,n,ac,ax");
+      }
+      pclose(fp);
+    }
+
      return RETURN_OK;
 
 }
@@ -1394,7 +1460,7 @@ static int wifi_openWpaSupConnection()
     // Open Control connection
     pthread_mutex_lock(&wpa_sup_lock);
     wpa_ctrl_close(g_wpa_ctrl);
-    g_wpa_ctrl = wpa_ctrl_open(WPA_SUP_CTRL);
+    g_wpa_ctrl = wpa_ctrl_open(g_ctx.ctrl_path);
     if(NULL != g_wpa_ctrl) {
         WIFI_LOG_INFO("wpa_supplicant control connection opened successfuly. \n");
     } else{
@@ -1407,7 +1473,7 @@ static int wifi_openWpaSupConnection()
     // Open Monitor Connection
     pthread_mutex_lock(&wpa_sup_lock);
     wpa_ctrl_close(g_wpa_monitor);
-    g_wpa_monitor = wpa_ctrl_open(WPA_SUP_CTRL);
+    g_wpa_monitor = wpa_ctrl_open(g_ctx.ctrl_path);
     if(NULL != g_wpa_monitor) {
         WIFI_LOG_INFO("wpa_supplicant monitor connection opened successfuly. \n");
         if ( wpa_ctrl_attach(g_wpa_monitor) != 0) {
@@ -1470,14 +1536,14 @@ void* monitor_wpa_health(void* param)
                     telemetry_event_d("WIFIV_ERR_HBFail", 1);
                 }
                 pingCount++;
-                sleep(3);
+                wifi_usleep(1000000 * 3);
             }
             if(pingCount >= 5) {
                  WIFI_LOG_INFO("Heartbeat failed for all attempts, Trying to reopen Connection.\n");
                  wifi_openWpaSupConnection();
             }
         }
-        sleep(WPA_SUP_PING_INTERVAL);
+        wifi_usleep(WPA_SUP_PING_INTERVAL * 1000000);
     }
 }
 
@@ -1604,9 +1670,6 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool) {
 
 INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
     int ret = RETURN_ERR;
-    FILE *fp = NULL;
-    char resultBuff[BUF_SIZE];
-    char cmd[50];
     char radio_status[20];
     char cli_buff[512];
     char *ptr = NULL;
@@ -1644,38 +1707,32 @@ INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
             WIFI_LOG_INFO("Radio State is not available in wpa_cli STATUS \n");
         }
     }
-    else      // alternate method for getting wlan0 status
+    else
     {
-       if (status == -2)
-          telemetry_event_d("WIFIV_WARN_hal_timeout", 1);
-       memset(cmd,0,sizeof(cmd));
-       memset(resultBuff,0,sizeof(resultBuff));
-       snprintf(cmd,sizeof(cmd),"cat /sys/class/net/wlan0/operstate");
-       fp = popen(cmd,"r");
-       if (fp != NULL)
-       {
-          if (fgets(resultBuff, sizeof (resultBuff), fp) != NULL)
-          {
-             sscanf(resultBuff,"%s",radio_status);
-             if ( strcmp(radio_status,"up") == 0)
+        char path[PATH_MAX];
+        snprintf(path, PATH_MAX, "/sys/class/net/%s/operstate", g_ctx.conf.wlan_Interface);
+
+        char *operstate = wifi_readFile(path, true);
+        if (operstate) {
+            if (!strncasecmp(operstate, "up", 2)) {
                 strcpy(output_string, "UP");
-             else if (strcmp(radio_status,"down") == 0)
+                ret = RETURN_OK;
+            }
+            else if (!strncasecmp(operstate, "down", 4)) {
                 strcpy(output_string, "DOWN");
-             WIFI_LOG_INFO("The radio is %s \n",output_string);
-             ret = RETURN_OK;
-          }
-          else
-          {
-             WIFI_LOG_ERROR("Error in executing `cat /sys/class/net/wlan0/operstate`  parsing \n");
-             ret = RETURN_ERR;
-          }
-          pclose(fp);
-       }
-       else
-       {
-          WIFI_LOG_ERROR("Error in popen() of sys/class/net/wlan0/operstate : %s \n",__FUNCTION__);
-          ret=RETURN_ERR;
-       }
+                ret = RETURN_OK;
+            }
+            else {
+                WIFI_LOG_ERROR("failed to parse the operstate from %s. '%s'\n", 
+		    path, operstate);
+                ret = RETURN_ERR;
+            }
+            WIFI_LOG_INFO("The radio is %s (operstate=%s)\n", output_string, operstate);
+            free(operstate);
+      }
+      else {
+          ret = RETURN_ERR;
+      }
     }
     return ret;
 }
@@ -1724,7 +1781,7 @@ INT wifi_getSSIDTrafficStats(INT ssidIndex, wifi_ssidTrafficStats_t *output_stru
       return 0;
     }
     system("wl counter > /tmp/wlparam.txt");
-    bufPtr=readFile(filename);
+    bufPtr=wifi_readFile(filename, false);
     if(bufPtr)
     {
         ptrToken = strtok_r (bufPtr," \t\n", &saveptr);
@@ -1785,7 +1842,7 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable) {
 }
 
 INT wifi_getRadioIfName(INT radioIndex, CHAR *output_string) {
-    strcpy(output_string, "wlan0");
+    strcpy(output_string, g_ctx.conf.wlan_Interface);
     return RETURN_OK;
 }
 INT wifi_setRadioScanningFreqList(INT radioIndex, const CHAR *freqList)
@@ -1947,4 +2004,62 @@ INT wifi_applySSIDSettings(INT ssidIndex) {
     return RETURN_OK;
 }
 
+void wifi_initContext(wifi_context_t * ctx, wifi_halConfig_t *conf)
+{
+  memset(ctx, 0, sizeof(*ctx));
+  if (!conf) {
+    strcpy(ctx->conf.wlan_Interface, "wlan0");
+  }
+  else {
+    strncpy(ctx->conf.wlan_Interface, conf->wlan_Interface, WLAN_IFNAMSIZ -1);
+  }
+
+  snprintf(ctx->ctrl_path, WLAN_PATHMAX, "/var/run/wpa_supplicant/%s", ctx->conf.wlan_Interface);
+}
+
+void wifi_interfaceSetEnabled(const char * ifname, bool enable)
+{
+  int ret;
+  bool do_set;
+  struct ifreq req;
+
+  int soc = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+  if (soc == -1) {
+    WIFI_LOG_ERROR("error checking interface status, socket error. %s\n",
+      strerror(errno));
+    return;
+  }
+
+  do_set = false;
+  memset(&req, 0, sizeof(req));
+  strncpy(req.ifr_ifrn.ifrn_name, ifname, IFNAMSIZ);
+
+  // read the current interface status.
+  ret = ioctl(soc, SIOCGIFFLAGS, &req);
+  if (ret == -1) {
+    WIFI_LOG_ERROR("failed to get current state of interface %s. %s",
+      ifname, strerror(errno));
+    return;
+  }
+
+  if ((req.ifr_flags & IFF_UP) == IFF_UP) {
+    if (!enable) {
+      req.ifr_flags &= ~IFF_UP;
+      do_set = true;
+    }
+  }
+  else {
+    if (enable) {
+      req.ifr_flags |= IFF_UP;
+      do_set = true;
+    }
+  }
+
+  if (do_set) {
+    ret = ioctl(soc, SIOCSIFFLAGS, &req);
+    if (ret == -1) {
+      WIFI_LOG_ERROR("failed to disable interface. %s\n", strerror(errno));
+    }
+  }
+}
 

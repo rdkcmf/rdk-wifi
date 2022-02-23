@@ -554,6 +554,15 @@ INT wifi_factoryResetRadio(int radioIndex); 	//RDKB
  */
 INT wifi_init();                              //RDKB
 
+#define WLAN_IFNAMSIZ 32
+
+typedef struct _wifi_halSettings
+{
+  char wlan_Interface[WLAN_IFNAMSIZ];
+} wifi_halConfig_t;
+
+INT wifi_initWithConfig(wifi_halConfig_t * conf);
+
 /**
  * @brief Deletes all the saved access point configuration details.
  *
