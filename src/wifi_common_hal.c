@@ -85,7 +85,7 @@ int update_wpa_configuration(int factory_reset, int mem_only_psk, int update_con
     if(access(WPA_SUPL_CONF, F_OK ) != -1 && !factory_reset)
         wifi_hal_msg("Configuration file present\n");
     else {
-	system("mkdir -p /opt/wifi");
+	system("mkdir -p /opt/secure/wifi");
         FILE* fp;
         fp = fopen(WPA_SUPL_CONF, "w");
         if(fp == NULL){
@@ -147,7 +147,7 @@ INT wifi_init() {
     system("rm -f /var/run/wpa_supplicant/wlan0");
  
     wifi_hal_msg("Starting wpa_supplicant \n");
-    system("wpa_supplicant -B -Dnl80211 -c/opt/wifi/wpa_supplicant.conf -iwlan0 -P/var/run/wpa_supplicant/wlan0.pid");
+    system("wpa_supplicant -B -Dnl80211 -c/opt/secure/wifi/wpa_supplicant.conf -iwlan0 -P/var/run/wpa_supplicant/wlan0.pid");
     
     while (g_wifi.ctrl_handle==NULL) {
         g_wifi.ctrl_handle = wpa_ctrl_open(WPA_SUPL_CTRL);

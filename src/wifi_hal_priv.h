@@ -32,7 +32,7 @@
 #endif
 
 #define MODULE_NAME		"WIFI-HAL"
-#define WPA_SUPL_CONF		"/opt/wifi/wpa_supplicant.conf"
+#define WPA_SUPL_CONF		"/opt/secure/wifi/wpa_supplicant.conf"
 #define WPA_SUPL_PIDFILE	"/var/run/wpa_supplicant/wlan0.pid"
 #define WPA_SUPL_CTRL		"/var/run/wpa_supplicant/wlan0"
 
