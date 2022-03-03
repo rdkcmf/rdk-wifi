@@ -226,10 +226,14 @@ static INT getFrequencyListFor_Band(WIFI_HAL_FREQ_BAND band, char *output_string
         WIFI_LOG_ERROR("[%s] Memory not allocated for output_string \n",__FUNCTION__);
         return RETURN_ERR;
     }
-    char *s,*t,*r;
+    char *s = NULL;
+    char *t = NULL;
+    char *r = NULL;
+    char *saveptr = NULL;
     char lines[32][64];
     int i;
     INT ret = RETURN_ERR;
+
     WIFI_LOG_INFO("in getFrequencyListFor_Band ..\n");
     pthread_mutex_lock(&wpa_sup_lock);
     int ret_status = wpaCtrlSendCmd("GET_CAPABILITY freq");
@@ -255,19 +259,21 @@ static INT getFrequencyListFor_Band(WIFI_HAL_FREQ_BAND band, char *output_string
         else
         {
             s = s+18;
-            r = strtok(s,"\n");
+            r = strtok_r(s,"\n", &saveptr);
             i=0;
             while(r != NULL)
             {
                 strcpy(lines[i],r);
-                r = strtok(NULL,"\n");
+                r = strtok_r(NULL,"\n", &saveptr);
                 i++;
             }
+
+            saveptr = NULL;
             for(int k=0;k<i;k++)
             {
                 char *ptr = lines[k];
                 strtok_r(ptr,"=", &ptr);
-                char *tmp = strtok(ptr," ");
+                char *tmp = strtok_r(ptr," ", &saveptr);
                 strcpy(lines[k],tmp);
                 strcat(output_string,lines[k]);
                 strcat(output_string, " ");
@@ -592,7 +598,8 @@ static int is_zero_bssid(char* bssid) {
 
 void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
 {
-    char *ptr;
+    char *ptr     = NULL;
+    char *saveptr = NULL;
     char *bssid, *ssid;
     int phyrate, noise, rssi,freq,avgRssi;
     int retStatus = -1;
@@ -629,7 +636,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
 
 
         if(wpaCtrlSendCmd("BSS current") == 0) {
-            char* token = strtok(return_buf, "\n");
+            char* token = strtok_r(return_buf, "\n", &saveptr);
             while(token != NULL) {
                 if(strncmp(token,"bssid=",6) == 0) {
                     // Check if we get proper BSSID from status no need to copy it
@@ -644,7 +651,7 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
                     get_security_mode_and_encryption_type(flags, stats->sta_SecMode, stats->sta_Encryption);
                     break;
                 }
-                token = strtok(NULL, "\n");
+                token = strtok_r(NULL, "\n", &saveptr);
             }
         } else {
             WIFI_LOG_ERROR("Failed to get BSSID from BSS current\n");
@@ -1064,7 +1071,9 @@ INT wifi_getRadioStandard(INT radioIndex, CHAR *output_string, BOOL *gOnly, BOOL
 static void getPossibleChannelsFromCapability(char* channelCap,char *modeStr,char* output_string)
 {
     char *pch=NULL,*final=NULL;
-    pch = strtok(channelCap,"\n");
+    char *saveptr = NULL;
+
+    pch = strtok_r(channelCap,"\n", &saveptr);
     while (pch != NULL)
     {   
         if(strstr(pch,modeStr))
@@ -1082,7 +1091,7 @@ static void getPossibleChannelsFromCapability(char* channelCap,char *modeStr,cha
             }
             break;
         }
-        pch = strtok (NULL, "\n");
+        pch = strtok_r (NULL, "\n", &saveptr);
     }
     if(pch !=NULL)
         strcpy(output_string,pch);
@@ -1683,9 +1692,10 @@ INT wifi_getRadioMCS(INT radioIndex, INT *output_INT){
 
 INT wifi_getSSIDTrafficStats(INT ssidIndex, wifi_ssidTrafficStats_t *output_struct) {
 
-char filename[]="/tmp/wlparam.txt";
-char *bufPtr=NULL;
-char *ptrToken;   
+    char filename[]="/tmp/wlparam.txt";
+    char *bufPtr=NULL;
+    char *saveptr = NULL;
+    char *ptrToken;
 
     if(!output_struct) {
       WIFI_LOG_INFO("output struct is null");
@@ -1695,30 +1705,30 @@ char *ptrToken;
     bufPtr=readFile(filename);
     if(bufPtr)
     {
-        ptrToken = strtok (bufPtr," \t\n");
+        ptrToken = strtok_r (bufPtr," \t\n", &saveptr);
         while (ptrToken != NULL)
         {
             if (strcmp(ptrToken, "txdatamcast") == 0)
             {
-                ptrToken = strtok (NULL, " \t\n");
+                ptrToken = strtok_r (NULL, " \t\n", &saveptr);
                 output_struct->ssid_MulticastPacketsSent=strtoull(ptrToken, NULL, 10);
                 WIFI_LOG_INFO("\n txdatamcast = %llu ",strtoull(ptrToken, NULL, 10));
             }
             else if (strcmp(ptrToken, "txdatabcast") == 0)
             {
-                ptrToken = strtok (NULL, " \t\n");
+                ptrToken = strtok_r (NULL, " \t\n", &saveptr);
                 output_struct->ssid_BroadcastPacketsSent=strtoull(ptrToken, NULL, 10);
                 WIFI_LOG_INFO("\n txdatabcast = %llu ",strtoull(ptrToken, NULL, 10));
             }
             else if (strcmp(ptrToken, "txnoack") == 0)
             {
-                ptrToken = strtok (NULL, " \t\n");
+                ptrToken = strtok_r (NULL, " \t\n", &saveptr);
                 output_struct->ssid_ACKFailureCount=strtoull(ptrToken, NULL, 10);
                 WIFI_LOG_INFO("\n txnoack  = %llu ",strtoull(ptrToken, NULL, 10));
             }
             else
             {
-                ptrToken = strtok (NULL, " \t\n");
+                ptrToken = strtok_r (NULL, " \t\n", &saveptr);
             }   
         }   
         free(bufPtr);

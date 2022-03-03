@@ -224,7 +224,8 @@ char ssid_to_find[MAX_SSID_LEN+1] = {0};
 
 /****** Helper functions ******/
 char* getValue(const char *buf, const char *keyword) {
-    char *ptr = NULL;
+    char *ptr     = NULL;
+    char *saveptr = NULL;
  
     if(buf == NULL)
         return NULL;
@@ -232,8 +233,8 @@ char* getValue(const char *buf, const char *keyword) {
     ptr = strstr(buf, keyword);
     if (ptr == NULL) return NULL;
 
-    strtok(ptr, "=");
-    return (strtok(NULL, "\n"));
+    strtok_r(ptr, "=", &saveptr);
+    return (strtok_r(NULL, "\n", &saveptr));
 }
 
 char trimSpace(char *srcStr)
@@ -323,7 +324,8 @@ static BOOL wpa_supplicant_conf_reset()
 /*********Callback thread to send messages to Network Service Manager *********/
 void* monitor_thread_task(void *param)
 {
-    char *start;
+    char *start   = NULL;
+    char *saveptr = NULL;
 
     char current_ssid[MAX_SSID_LEN+1] = {0}; // TODO: 32 chars won't be enough if undecoded SSID from wpa_supplicant has special chars (PACEXI5-2357)
     char current_bssid[ENET_LEN+1] = {0};    // fixed length 18 chars (aa:bb:cc:dd:ee:ff + '\0')
@@ -513,8 +515,8 @@ void* monitor_thread_task(void *param)
                     // "<3>CTRL-EVENT-DISCONNECTED bssid=5c:b0:66:00:4d:10 reason=8"
 
                     char* name_value_entry = NULL;
-                    strtok (start, " "); // skip past the "CTRL-EVENT-DISCONNECTED" in the event_buffer
-                    while (NULL != (name_value_entry = strtok (NULL, " ")))
+                    strtok_r (start, " ", &saveptr); // skip past the "CTRL-EVENT-DISCONNECTED" in the event_buffer
+                    while (NULL != (name_value_entry = strtok_r (NULL, " ", &saveptr)))
                     {
                         if (0 == strncmp (name_value_entry, "bssid=", strlen ("bssid=")))
                             snprintf (last_disconnected_bssid, sizeof(last_disconnected_bssid), "%s", name_value_entry + strlen ("bssid="));
@@ -569,8 +571,8 @@ void* monitor_thread_task(void *param)
 
                         // search for other fields after ssid field
                         char* name_value_entry = NULL;
-                        strtok (ptr_end_quote, " ");
-                        while (NULL != (name_value_entry = strtok (NULL, " ")))
+                        strtok_r (ptr_end_quote, " ", &saveptr);
+                        while (NULL != (name_value_entry = strtok_r (NULL, " ", &saveptr)))
                         {
                             if (0 == strncmp (name_value_entry, "auth_failures=", strlen ("auth_failures=")))
                                 auth_failures = atoi (name_value_entry + strlen ("auth_failures="));
@@ -903,12 +905,13 @@ INT wifi_setCliWpsEnrolleePin(INT ssidIndex, CHAR *wps_pin){
 // Parse Scan results and fetch all WPS-PBC enabled accesspoints
 int parse_wps_pbc_accesspoints(char *buf,wifi_wps_pbc_ap_t ap_list[])
 {
-    char  *ptr;
+    char *ptr     = NULL;
+    char *saveptr = NULL;
     char ssid[MAX_SSID_LEN+1];
     char bssid[32];
     char rssi[8];
     char freq[8];
-    int apCount = 0;
+    int  apCount = 0;
     char *eptr = NULL;
 
     //Memset arrays
@@ -922,7 +925,7 @@ int parse_wps_pbc_accesspoints(char *buf,wifi_wps_pbc_ap_t ap_list[])
     if (ptr == NULL) return -1;
     ptr += strlen("/ ssid") + 1;
 
-    char* line = strtok(ptr, "\n");
+    char* line = strtok_r(ptr, "\n", &saveptr);
     while(line != NULL && apCount < MAX_WPS_AP_COUNT)
     {
         if(strstr(line,"[WPS-PBC]") != NULL)
@@ -943,7 +946,7 @@ int parse_wps_pbc_accesspoints(char *buf,wifi_wps_pbc_ap_t ap_list[])
                 apCount++;
             }
         }
-        line = strtok(NULL, "\n");
+        line = strtok_r(NULL, "\n", &saveptr);
     }
     return apCount;
 }
@@ -1450,6 +1453,7 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
 
 INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
     char buf[512];
+    char *saveptr = NULL;
     static char ssid[32]={0};
     static char bssid[20]={0};
     static char security[64]={0};
@@ -1476,10 +1480,10 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
     }
     while (fgets(buf, sizeof(buf), f) != NULL)
     {
-        tokenKey=strtok(buf,"\"=");
+        tokenKey=strtok_r(buf,"\"=", &saveptr);
         if (tokenKey == NULL)
             continue;
-        tokenValue=strtok(NULL,"\"=");
+        tokenValue=strtok_r(NULL,"\"=", &saveptr);
         trimSpace(tokenKey);
         if((tokenValue != NULL) && (strcasecmp(tokenKey,"ssid") == 0))
         {
