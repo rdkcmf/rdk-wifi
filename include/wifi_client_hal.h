@@ -122,6 +122,7 @@ typedef struct _wifi_pairedSSIDInfo
   CHAR  ap_bssid[64];	//!< [MACAddress] The BSSID (Basic Service Set ID) used for the neighboring WiFi SSID.
   CHAR  ap_security[64];	//!< Security of AP
   CHAR  ap_passphrase[128]; //!< Passphrase of AP
+  CHAR  ap_wep_key[128]; //!< wep_key of AP incase of WEP security
 }wifi_pairedSSIDInfo_t;
 
 /**@} */

@@ -1454,6 +1454,7 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
     static char bssid[20]={0};
     static char security[64]={0};
     static char passphrase[64]={0};
+    static char wep_key[128]={0};
     char *tokenKey;
     char *tokenValue;
     FILE *f = NULL;
@@ -1464,6 +1465,7 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
         strcpy(pairedSSIDInfo->ap_bssid, bssid);
         strcpy(pairedSSIDInfo->ap_security, security);
         strcpy(pairedSSIDInfo->ap_passphrase,passphrase);
+        strcpy(pairedSSIDInfo->ap_wep_key,wep_key);
         return RETURN_OK;
     }
     f = fopen("/opt/secure/wifi/wpa_supplicant.conf", "r");
@@ -1500,6 +1502,14 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
             trimSpace(tokenValue);
             strcpy(pairedSSIDInfo->ap_security,tokenValue);
             strcpy(security,tokenValue);
+        }
+        else if((tokenValue != NULL) && (strstr(tokenKey,"wep_key") != 0))
+        {
+           trimSpace(tokenValue);
+           strcpy(pairedSSIDInfo->ap_wep_key,tokenValue);
+           strcpy(wep_key,tokenValue);
+           strcpy(pairedSSIDInfo->ap_passphrase,tokenValue);//Incase of WEP, wep_key is printed for passphrase
+           strcpy(passphrase,tokenValue);
         }
     }
     fclose(f);
