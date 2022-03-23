@@ -442,7 +442,8 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
   if(	(AP_security_mode == WIFI_SECURITY_WPA_PSK_AES)  || \
 	(AP_security_mode == WIFI_SECURITY_WPA2_PSK_AES) || \
 	(AP_security_mode == WIFI_SECURITY_WPA_PSK_TKIP) || \
-	(AP_security_mode == WIFI_SECURITY_WPA2_PSK_TKIP) ) {
+	(AP_security_mode == WIFI_SECURITY_WPA2_PSK_TKIP) || \
+       (AP_security_mode == WIFI_SECURITY_WPA_WPA2_PSK) ) {
       wifi_hal_msg("Security mode is PSK\n");
       /* Key Management */
       send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK 0 key_mgmt WPA-PSK");

@@ -261,7 +261,15 @@ INT parse_scan_results(char *res_buf)
     wifi_neighbor_ap_t *cur_ap;
     char signal_str[64];
     char flags[256];
-    char *start_ptr, *end_ptr, *encrypt_ptr;
+    char *start_ptr, *end_ptr, *encrypt_ptr, *security_ptr;
+    const char* wpa2 = NULL;
+    const char* wpa = NULL;
+    const char* eap = NULL;
+    const char* ccmp = NULL;
+    const char* sae = NULL;
+    const char* tkip = NULL;
+    const char* wep = NULL;
+    const char* none = NULL;
     
     if(!res_buf) return -1;
   
@@ -310,7 +318,9 @@ INT parse_scan_results(char *res_buf)
         /*flags (Encryption Mode)*/ 
         COPY_NEXT_TOKEN(flags, start_ptr, end_ptr, '\t');
         memset(cur_ap->ap_EncryptionMode, 0, sizeof(cur_ap->ap_EncryptionMode));
+        memset(cur_ap->ap_SecurityModeEnabled, 0, sizeof(cur_ap->ap_SecurityModeEnabled));
         encrypt_ptr = cur_ap->ap_EncryptionMode;
+        security_ptr = cur_ap->ap_SecurityModeEnabled;
 
 	APPEND_SEC_MODE_IF_MATCH(flags, "WEP",                  WIFI_SECURITY_WEP_64);
 	APPEND_SEC_MODE_IF_MATCH(flags, "[WPA-PSK-CCMP]",       WIFI_SECURITY_WPA_PSK_AES);
@@ -322,6 +332,35 @@ INT parse_scan_results(char *res_buf)
         if(enc_mode_found>0) *(encrypt_ptr-1)='\0';
         wifi_hal_dbg("EncryptionMode=%s\n", cur_ap->ap_EncryptionMode);
         enc_mode_found=0;
+
+        /*Security Mode*/
+        wpa = strstr(flags, "WPA-");
+        wpa2 = strstr(flags, "WPA2-");
+        eap = strstr(flags, "EAP");
+        ccmp = strstr(flags, "CCMP");
+        sae = strstr(flags, "SAE");
+        tkip = strstr(flags, "TKIP");
+        wep = strstr(flags, "WEP");
+        none = strstr(flags, "NONE");
+
+        if(wpa)
+            strcat(security_ptr, "WPA-");
+        if(wpa2)
+            strcat(security_ptr, "WPA2-");
+        if(sae)
+            strcat(security_ptr, "WPA3-");
+        if(eap)
+            strcat(security_ptr, "Enterprise-");
+        if(wep)
+            strcat(security_ptr, "WEP-");
+        if(none)
+            strcat(security_ptr, "None-");
+
+        if(security_ptr[0])
+            security_ptr[strlen(security_ptr) - 1] = '\0';
+        else
+            wifi_hal_msg("No secutiry mode found.");
+
         /*SSID*/ 
         COPY_NEXT_TOKEN(cur_ap->ap_SSID, start_ptr, end_ptr, '\n');
 
