@@ -1291,13 +1291,21 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       AP_security_mode == WIFI_SECURITY_WPA2_PSK_AES ||
       AP_security_mode == WIFI_SECURITY_WPA_PSK_TKIP ||
       AP_security_mode == WIFI_SECURITY_WPA2_PSK_TKIP ||
-      AP_security_mode == WIFI_SECURITY_WPA_WPA2_PSK)
+      AP_security_mode == WIFI_SECURITY_WPA_WPA2_PSK ||
+      AP_security_mode == WIFI_SECURITY_WPA3_PSK_AES ||
+      AP_security_mode == WIFI_SECURITY_WPA3_SAE)
   {
-      WIFI_LOG_INFO("Security mode is PSK\n");
-      /* Authentication algorithm */
-      wpaCtrlSendCmd("SET_NETWORK 0 auth_alg OPEN");
+      if(AP_security_mode == WIFI_SECURITY_WPA3_PSK_AES){
+         WIFI_LOG_INFO("Security mode is WPA2/WPA3\n");
+      }
+      else if(AP_security_mode == WIFI_SECURITY_WPA3_SAE){
+         WIFI_LOG_INFO("Security mode is WPA3\n");
+      }
+      else{
+         WIFI_LOG_INFO("Security mode is PSK\n");
+      }
       /* Key Management */
-      sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt WPA-PSK");
+      sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt WPA-PSK SAE");
       wpaCtrlSendCmd(cmd_buf);
       /* Set the PSK */
       sprintf(cmd_buf, "SET_NETWORK 0 psk \"%s\"", AP_security_PreSharedKey);
@@ -1313,58 +1321,6 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
             isPrivateSSID = 1;
         }
         return RETURN_OK;
-      }
-  }
-  else if (AP_security_mode == WIFI_SECURITY_WPA3_PSK_AES)
-  {
-      WIFI_LOG_INFO("Security mode is WPA2/WPA3\n" );
-      /* Frame Management */
-      sprintf(cmd_buf, "SET_NETWORK 0 ieee80211w 2");
-      wpaCtrlSendCmd(cmd_buf);
-      /* set the key-mgmt */
-      sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt SAE");
-      wpaCtrlSendCmd(cmd_buf);
-      /* Set the PSK */
-      sprintf(cmd_buf, "SET_NETWORK 0 psk \"%s\"", AP_security_PreSharedKey);
-      wpaCtrlSendCmd(cmd_buf);
-      if(strstr(return_buf, "FAIL") != NULL){
-          WIFI_LOG_INFO("Password may not be falling within spec\n" );
-          wifiStatusCode_t connError;
-          connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
-          (*callback_connect)(1, AP_SSID, &connError);
-          pthread_mutex_unlock(&wpa_sup_lock);
-          if (!isPrivateSSID)
-          {
-              isPrivateSSID = 1;
-          }
-          return RETURN_OK;
-      }
-  }
-  else if (AP_security_mode == WIFI_SECURITY_WPA3_SAE)
-  {
-      WIFI_LOG_INFO("Security mode is WPA3\n" );
-      /* Frame Management */
-      sprintf(cmd_buf, "SET_NETWORK 0 ieee80211w 2");
-      wpaCtrlSendCmd(cmd_buf);
-      /* Key Management */
-      sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt SAE");
-      wpaCtrlSendCmd(cmd_buf);
-      /* Set the sae_password */
-      sprintf(cmd_buf, "SET_NETWORK 0 sae_password \"%s\"", AP_security_PreSharedKey);
-      wpaCtrlSendCmd(cmd_buf);
-      sprintf(cmd_buf, "SET_NETWORK 0 psk \"%s\"", AP_security_PreSharedKey);
-      wpaCtrlSendCmd(cmd_buf);
-      if(strstr(return_buf, "FAIL") != NULL){
-          WIFI_LOG_INFO("Password may not be falling within spec\n" );
-          wifiStatusCode_t connError;
-          connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
-          (*callback_connect)(1, AP_SSID, &connError);
-          pthread_mutex_unlock(&wpa_sup_lock);
-          if (!isPrivateSSID)
-          {
-              isPrivateSSID = 1;
-          }
-          return RETURN_OK;
       }
   }
   else if (AP_security_mode == WIFI_SECURITY_WPA_ENTERPRISE_TKIP ||
