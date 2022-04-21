@@ -658,6 +658,8 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         }
 
     } else {
+        if (retStatus == -2)
+            telemetry_event_d("WIFIV_WARN_hal_timeout", 1);
         WIFI_LOG_ERROR("wpaCtrlSendCmd(STATUS) failed - Ret = %d \n",retStatus);
         goto exit;
     }
@@ -729,6 +731,8 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
     }
     else
     {
+        if (retStatus == -2)
+            telemetry_event_d("WIFIV_ERR_hal_signalpolltimeout", 1);
         WIFI_LOG_ERROR("wpaCtrlSendCmd(SIGNAL_POLL) failed ret = %d\n",retStatus);
         goto exit;
     }
@@ -1238,7 +1242,9 @@ INT wifi_getSSIDName(INT apIndex, CHAR *output_string) {
     if (output_string != NULL)
     {
         pthread_mutex_lock(&wpa_sup_lock);
-        wpaCtrlSendCmd("STATUS");
+        int retStatus = wpaCtrlSendCmd("STATUS");
+        if (retStatus == -2)
+            telemetry_event_d("WIFIV_WARN_hal_timeout", 1);
         char *ssid = getValue(return_buf, "\nssid"); // include '\n' to avoid a match with "bssid"
         if (ssid == NULL)
         {
@@ -1266,7 +1272,9 @@ INT wifi_getBaseBSSID(INT ssidIndex, CHAR *output_string) {
     int maxBssidLen = 18;
 
     pthread_mutex_lock(&wpa_sup_lock);
-    wpaCtrlSendCmd("STATUS");
+    int retStatus = wpaCtrlSendCmd("STATUS");
+    if (retStatus == -2)
+        telemetry_event_d("WIFIV_WARN_hal_timeout", 1);
     bssid = getValue(return_buf, "bssid");
     if (bssid == NULL)
         goto exit_err;
@@ -1287,7 +1295,9 @@ INT wifi_getSSIDMACAddress(INT ssidIndex, CHAR *output_string) {
     char *bssid;
     
     pthread_mutex_lock(&wpa_sup_lock);
-    wpaCtrlSendCmd("STATUS");
+    int retStatus = wpaCtrlSendCmd("STATUS");
+    if (retStatus == -2)
+        telemetry_event_d("WIFIV_WARN_hal_timeout", 1);
     bssid = getValue(return_buf, "bssid");
     if (bssid == NULL) 
         goto exit_err;
@@ -1313,7 +1323,9 @@ static INT wifi_getRadioSignalParameter (const CHAR* parameter, CHAR *output_str
     int ret = RETURN_ERR;
 
     pthread_mutex_lock (&wpa_sup_lock);
-    wpaCtrlSendCmd ("SIGNAL_POLL");
+    int retStatus = wpaCtrlSendCmd ("SIGNAL_POLL");
+    if (retStatus == -2)
+        telemetry_event_d("WIFIV_ERR_hal_signalpolltimeout", 1);
     if (NULL != (parameter_value = getValue(return_buf, parameter)))
     {
         strcpy (output_string, parameter_value);
@@ -1351,6 +1363,8 @@ static int wifi_getWpaSupplicantStatus()
     memset(temp_buff,0,sizeof(temp_buff));
     pthread_mutex_lock(&wpa_sup_lock);
     retStatus = wpaCtrlSendCmd("PING");
+    if (retStatus == -3)
+        telemetry_event_d("WIFIV_ERR_wpasupplicant_down", 1);
     strncpy(temp_buff,return_buf,sizeof(temp_buff)-1);
     pthread_mutex_unlock(&wpa_sup_lock);
 
@@ -1432,6 +1446,7 @@ void* monitor_wpa_health(void* param)
         else
         { 
             WIFI_LOG_ERROR("wpa_supplicant heartbeat failed, Reason: %s \n",retStatus==-1?"No response.":"Command failure.");
+            telemetry_event_d("WIFIV_ERR_HBFail", 1);
             pingCount = 0;
             WIFI_LOG_INFO("Trying for 5 continues pings...\n");
             while(pingCount < 5)
@@ -1450,7 +1465,10 @@ void* monitor_wpa_health(void* param)
                     break; // Got one Success lets break
                 }
                 else
+                {
                     WIFI_LOG_ERROR("wpa_supplicant heartbeat failed, Reason: %s, Attempt = %d\n",retStatus==-1?"No response.":"Command failure.",pingCount+1);
+                    telemetry_event_d("WIFIV_ERR_HBFail", 1);
+                }
                 pingCount++;
                 sleep(3);
             }
@@ -1560,7 +1578,9 @@ INT wifi_getRadioTrafficStats(INT radioIndex, wifi_radioTrafficStats_t *output_s
         WIFI_LOG_ERROR("Error in popen() : Opening /proc/net/dev failed \n");
     }
     pthread_mutex_lock(&wpa_sup_lock);
-    wpaCtrlSendCmd("SIGNAL_POLL");
+    int retStatus = wpaCtrlSendCmd("SIGNAL_POLL");
+    if (retStatus == -2)
+        telemetry_event_d("WIFIV_ERR_hal_signalpolltimeout", 1);
     ptr = getValue(return_buf, "NOISE");
     if(NULL != ptr)
     {
@@ -1626,6 +1646,8 @@ INT wifi_getRadioStatus(INT radioIndex, CHAR *output_string) {
     }
     else      // alternate method for getting wlan0 status
     {
+       if (status == -2)
+          telemetry_event_d("WIFIV_WARN_hal_timeout", 1);
        memset(cmd,0,sizeof(cmd));
        memset(resultBuff,0,sizeof(resultBuff));
        snprintf(cmd,sizeof(cmd),"cat /sys/class/net/wlan0/operstate");

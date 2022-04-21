@@ -31,12 +31,6 @@
 #include <errno.h>
 #include "cJSON.h"
 #endif
-//This call back will be invoked when client automatically connect to AP.
-
-wifi_connectEndpoint_callback callback_connect;
-
-//This call back will be invoked when client lost the connection to AP.
-wifi_disconnectEndpoint_callback callback_disconnect;
 
 #include <wpa_ctrl.h>
 
@@ -222,6 +216,47 @@ void start_wifi_signal_monitor_timer(void *arg);
 
 char ssid_to_find[MAX_SSID_LEN+1] = {0};
 
+//This call back will be invoked when client automatically connect to AP.
+wifi_connectEndpoint_callback callback_connect;
+
+//This call back will be invoked when client lost the connection to AP.
+wifi_disconnectEndpoint_callback callback_disconnect;
+
+wifi_telemetry_ops_t *callback_telemetry;
+
+void wifi_connectEndpoint_callback_register(wifi_connectEndpoint_callback callback_proc)
+{
+    WIFI_LOG_INFO("Registering connect callback...\n");
+    callback_connect=callback_proc;
+}
+
+void wifi_disconnectEndpoint_callback_register(wifi_disconnectEndpoint_callback callback_proc)
+{
+    WIFI_LOG_INFO("Registering disconnect callback...\n");
+    callback_disconnect=callback_proc;
+}
+
+void wifi_telemetry_callback_register (wifi_telemetry_ops_t *telemetry_ops)
+{
+    WIFI_LOG_INFO("Registering telemetry callback...\n");
+    callback_telemetry = telemetry_ops;
+}
+
+void telemetry_init(char* name)
+{
+    if (callback_telemetry) callback_telemetry->init(name);
+}
+
+void telemetry_event_s(char* marker, char* value)
+{
+    if (callback_telemetry) callback_telemetry->event_s(marker, value);
+}
+
+void telemetry_event_d(char* marker, int value)
+{
+    if (callback_telemetry) callback_telemetry->event_d(marker, value);
+}
+
 /****** Helper functions ******/
 char* getValue(const char *buf, const char *keyword) {
     char *ptr     = NULL;
@@ -267,7 +302,7 @@ int wpaCtrlSendCmd(char *cmd) {
         return -2;
     } else if (ret < 0) {
         WIFI_LOG_INFO("cmd=%s failed \n", cmd);
-        return -1;
+        return -3;
     }
     return 0;
 }
@@ -471,7 +506,9 @@ void* monitor_thread_task(void *param)
                         WIFI_LOG_INFO("[%s:%d] Configuration Saved \n",__FUNCTION__,__LINE__);
                     }
  
-                    wpaCtrlSendCmd("STATUS");
+                    int retStatus = wpaCtrlSendCmd("STATUS");
+                    if (retStatus == -2)
+                        telemetry_event_d("WIFIV_WARN_hal_timeout", 1);
                     int rc = snprintf (tmp_return_buf, sizeof(tmp_return_buf), "%s", return_buf);
                     if(rc < 0)
                         WIFI_LOG_ERROR("snprintf of tmp_return_buf failed\n");
@@ -713,6 +750,7 @@ void* monitor_thread_task(void *param)
               else if(strstr(start,WPA_EVENT_BEACON_LOSS) != NULL)
               {
                   WIFI_LOG_INFO("Beacon Loss event detected. Client may disconnect.\n");
+                  telemetry_event_d("WIFIV_WARN_BcnLossdisconn", 1);
               } else if(strstr(start,"WNM-BTM-REQ-RECEIVED") != NULL)
               {
                   WIFI_LOG_INFO("WNM- BTM Request Received. \n");
@@ -1169,6 +1207,7 @@ INT wifi_setCliWpsButtonPush(INT ssidIndex){
   WIFI_LOG_INFO("SSID Index is not applicable here since this is a STA.. Printing SSID Index:%d\n", ssidIndex); 
   
   WIFI_LOG_INFO("WPS Push Button Call\n");
+  telemetry_event_d("WIFIV_ERR_WPS_button_pressed", 1);
   bWpsPBC = true;
   
   pthread_mutex_lock(&wpa_sup_lock);
@@ -1520,6 +1559,7 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
 
     if(pairedSSIDInfo->ap_ssid[0] == '\0') {
         WIFI_LOG_ERROR("No SSID in wpa_supplicant.conf\n");
+        telemetry_event_d("WIFIV_ERR_NoSSIDconf", 1);
         return RETURN_ERR;
     }
 
@@ -1532,7 +1572,9 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
     if (pairedSSIDInfo->ap_ssid[0] != '\0' && pairedSSIDInfo->ap_bssid[0] == '\0') // wpa_supplicant.conf file has SSID but not BSSID
     {
         pthread_mutex_lock(&wpa_sup_lock);
-        wpaCtrlSendCmd("STATUS");
+        int retStatus = wpaCtrlSendCmd("STATUS");
+        if (retStatus == -2)
+            telemetry_event_d("WIFIV_WARN_hal_timeout", 1);
         const char* current_bssid = getValue(return_buf, "bssid");
         WIFI_LOG_DEBUG("%s: current_bssid=[%s]\n", __FUNCTION__, current_bssid);
         if (current_bssid)
@@ -1568,22 +1610,6 @@ INT wifi_disconnectEndpoint(INT ssidIndex, CHAR *AP_SSID){
  wpaCtrlSendCmd("DISCONNECT");
  
  return RETURN_OK;
-}
-
-//Callback registration function.
-
-void wifi_connectEndpoint_callback_register(wifi_connectEndpoint_callback callback_proc){
-
-  WIFI_LOG_INFO("Registering connect callback...\n");
-  callback_connect=callback_proc;
-
-}
-
-//Callback registration function.
-void wifi_disconnectEndpoint_callback_register(wifi_disconnectEndpoint_callback callback_proc){
-
-   WIFI_LOG_INFO("Registering disconnect callback...\n");
-   callback_disconnect=callback_proc;
 }
 
 // Clear SSID info from HAL

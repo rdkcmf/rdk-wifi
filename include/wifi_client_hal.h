@@ -373,6 +373,21 @@ typedef INT (*wifi_connectEndpoint_callback)(INT ssidIndex, CHAR *AP_SSID, wifiS
 void wifi_connectEndpoint_callback_register(wifi_connectEndpoint_callback callback_proc);
 
 /**
+ *  @brief Telemetry callback functions
+ */
+typedef struct _wifi_telemetry_ops_t
+{
+    void (*init)(char* name);
+    void (*event_s)(char* marker, char* value);
+    void (*event_d)(char* marker, int value);
+} wifi_telemetry_ops_t;
+
+/**
+ * @param[in] telemetry_ops Telemetry callback functions
+ */
+void wifi_telemetry_callback_register(wifi_telemetry_ops_t *telemetry_ops);
+
+/**
  * @brief This call will give the last saved AP's ssid.
  *
  * @param[out] pairedSSIDInfo Structure which holds the last connected access point information.
