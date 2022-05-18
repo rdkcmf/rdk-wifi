@@ -27,9 +27,13 @@
 #include <wifi_client_hal.h>
 #include "wifi_hal_priv.h"
 
-/*Call backs which will be invoked when client automatically connect/disconnect with AP. */
+//This call back will be invoked when client automatically connect to AP.
 wifi_connectEndpoint_callback callback_connect;
+
+//This call back will be invoked when client lost the connection to AP.
 wifi_disconnectEndpoint_callback callback_disconnect;
+
+wifi_telemetry_ops_t *callback_telemetry;
 
 #ifdef WPA_SUPPLICANT
 extern WIFI_HAL_GLOBAL g_wifi;
@@ -583,15 +587,37 @@ INT wifi_disconnectEndpoint(INT ssidIndex, CHAR *AP_SSID){
 }
 #endif
 
-void wifi_connectEndpoint_callback_register(wifi_connectEndpoint_callback callback_proc){
-  wifi_hal_msg("Registering connect callback.\n");
-  callback_connect=callback_proc;
-
+void wifi_connectEndpoint_callback_register(wifi_connectEndpoint_callback callback_proc)
+{
+    wifi_hal_msg("Registering connect callback...\n");
+    callback_connect=callback_proc;
 }
 
-void wifi_disconnectEndpoint_callback_register(wifi_disconnectEndpoint_callback callback_proc){
-   wifi_hal_msg("Registering disconnect callback.\n");
-   callback_disconnect=callback_proc;
+void wifi_disconnectEndpoint_callback_register(wifi_disconnectEndpoint_callback callback_proc)
+{
+    wifi_hal_msg("Registering disconnect callback...\n");
+    callback_disconnect=callback_proc;
+}
+
+void wifi_telemetry_callback_register (wifi_telemetry_ops_t *telemetry_ops)
+{
+    wifi_hal_msg("Registering telemetry callback...\n");
+    callback_telemetry = telemetry_ops;
+}
+
+void telemetry_init(char* name)
+{
+    if (callback_telemetry) callback_telemetry->init(name);
+}
+
+void telemetry_event_s(char* marker, char* value)
+{
+    if (callback_telemetry) callback_telemetry->event_s(marker, value);
+}
+
+void telemetry_event_d(char* marker, int value)
+{
+    if (callback_telemetry) callback_telemetry->event_d(marker, value);
 }
 
 // Clear SSID info from HAL
