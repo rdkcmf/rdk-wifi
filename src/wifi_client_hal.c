@@ -1478,7 +1478,7 @@ INT wifi_lastConnected_Endpoint(wifi_pairedSSIDInfo_t *pairedSSIDInfo){
         tokenKey=strtok_r(buf,"\"=", &saveptr);
         if (tokenKey == NULL)
             continue;
-        tokenValue=strtok_r(NULL,"\"=", &saveptr);
+        tokenValue=strtok_r(NULL,"\"=\n", &saveptr);
         trimSpace(tokenKey);
         if((tokenValue != NULL) && (strcasecmp(tokenKey,"ssid") == 0))
         {
