@@ -162,6 +162,7 @@ char bUpdatedSSIDInfo=1;
 BOOL bIsWpsCompleted = TRUE;
 BOOL bIsPBCOverlapDetected = FALSE;
 BOOL bWpsPBC = FALSE;
+struct timespec timespec_wps_cancel;
 
 /* Initialize the state of the supplicant */
 WIFI_HAL_WPA_SUP_STATE cur_sup_state = WIFI_HAL_WPA_SUP_STATE_IDLE;
@@ -352,6 +353,11 @@ static BOOL wpa_supplicant_conf_reset()
     fprintf(fp, "update_config=1\n");
     fclose(fp);
     return true;
+}
+
+static long timespec_diff_ms(struct timespec* ts1, struct timespec* ts2)
+{
+    return ((ts2->tv_sec - ts1->tv_sec)*1000L) + ((ts2->tv_nsec - ts1->tv_nsec)/1000000);
 }
 
 /******************************/
@@ -665,6 +671,17 @@ void* monitor_thread_task(void *param)
 
                     WIFI_LOG_INFO("SSID [%s] not found in last scan\n", ssid_to_find);
                     connError = WIFI_HAL_ERROR_NOT_FOUND;
+
+                    // if a WPS_CANCEL command is sent to wpa_supplicant when it is in a SCANNING state,
+                    // it triggers a NETWORK_NOT_FOUND event; which we should ignore (or suffer XIONE-9407)
+                    // TODO: revisit logic with wpa_supplicant v2.10+ (introduces WPS_EVENT_CANCEL on WPS_CANCEL)
+                    struct timespec now;
+                    clock_gettime(CLOCK_MONOTONIC, &now);
+                    if (timespec_diff_ms(&timespec_wps_cancel, &now) < 1000)
+                    {
+                        WIFI_LOG_WARN("Ignoring NETWORK_NOT_FOUND event received within 1s of WPS_CANCEL \n");
+                        continue;
+                    }
 
                     // extra logic to check if an SSID change is the cause of the "network not found"
                     // if currently disconnected (no current ssid) and last disconnect was from the SSID for which we just got a "not found"
@@ -1024,6 +1041,7 @@ void stop_wifi_wps_connection()
             pthread_mutex_unlock(&wpa_sup_lock);
             pthread_mutex_lock(&wpa_sup_lock);
         }
+        clock_gettime(CLOCK_MONOTONIC, &timespec_wps_cancel);
         wpaCtrlSendCmd("WPS_CANCEL");
         // Abort scanning if any scanning is in progress
         if(cur_scan_state != WIFI_HAL_WPA_SUP_SCAN_STATE_IDLE)
