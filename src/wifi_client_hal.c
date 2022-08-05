@@ -627,6 +627,7 @@ INT wifi_clearSSIDInfo(INT ssidIndex) {
     G_WIFI_MUTEX_LOCK(&g_wifi.sup_lock);
     send_wpa_cli_command(result, sizeof(result)-1, "REMOVE_NETWORK 0");
     send_wpa_cli_command(result, sizeof(result)-1, "SAVE_CONFIG");
+    G_WIFI_MUTEX_UNLOCK(&g_wifi.sup_lock);
     return RETURN_OK;
 }
 
