@@ -1334,6 +1334,17 @@ INT wifi_connectEndpoint(INT ssidIndex, CHAR *AP_SSID, wifiSecurityMode_t AP_sec
       /* Key Management */
       sprintf(cmd_buf, "SET_NETWORK 0 key_mgmt WPA-PSK SAE");
       wpaCtrlSendCmd(cmd_buf);
+
+#ifdef RDKC
+      /* Set the SAE Password */
+      sprintf(cmd_buf, "SET_NETWORK 0 sae_password \"%s\"", AP_security_PreSharedKey);
+      int status = wpaCtrlSendCmd(cmd_buf);
+      if(strstr(return_buf, "FAIL") != NULL)
+      {
+         WIFI_LOG_ERROR("Failed to set sae_password\n");
+      }
+#endif
+
       /* Set the PSK */
       sprintf(cmd_buf, "SET_NETWORK 0 psk \"%s\"", AP_security_PreSharedKey);
       wpaCtrlSendCmd(cmd_buf);
