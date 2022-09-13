@@ -224,6 +224,7 @@ void start_wifi_signal_monitor_timer(void *arg);
 #endif
 
 char ssid_to_find[MAX_SSID_LEN+1] = {0};
+char scanned_ssid[MAX_SSID_LEN+1] = {0};
 
 //This call back will be invoked when client automatically connect to AP.
 wifi_connectEndpoint_callback callback_connect;
@@ -432,6 +433,7 @@ void* monitor_thread_task(void *param)
                         WIFI_LOG_INFO("ssid based on network id = [%s] \n", return_buf);
                     }
                     WIFI_LOG_INFO("SSID to find = [%s] \n", ssid_to_find);
+                    strcpy(scanned_ssid, ssid_to_find);
 
                     pthread_mutex_lock(&wpa_sup_lock);
 
@@ -714,7 +716,15 @@ void* monitor_thread_task(void *param)
                             pthread_mutex_unlock(&wpa_sup_lock);
                         }
                     }
-
+                    if ((WIFI_HAL_ERROR_NOT_FOUND == connError) && (0 != strcmp (ssid_to_find, scanned_ssid)) && isPrivateSSID)
+                    {
+                        // Hidden SSIDs will be listed in scan results only if a scan probe request is being initiated from supplicant.
+                        // Scan results is valid for 5s. In this gap, if a new connect request for hidden ssid comes,
+                        // supplicant checks this new SSID in previoulsy scanned list and detect as AP not found.
+                        // Here we are skipping this no ssid found error as a scan is not yet performed for the SSID to find.
+                        WIFI_LOG_INFO("Skipping no ssid found error: Scanned SSID = [%s] SSID to find =  [%s]", scanned_ssid, ssid_to_find);
+                        continue;
+                    }
                     if (callback_disconnect) (*callback_disconnect)(1, ssid_to_find, &connError);
                 } /* WPA_EVENT_NETWORK_NOT_FOUND */
 #ifdef WIFI_CLIENT_ROAMING
