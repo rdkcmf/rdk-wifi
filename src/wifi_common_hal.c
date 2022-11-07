@@ -797,7 +797,11 @@ void wifi_getStats(INT radioIndex, wifi_sta_stats_t *stats)
         WIFI_LOG_ERROR("wpaCtrlSendCmd(SIGNAL_POLL) failed ret = %d\n",retStatus);
         goto exit;
     }
-    WIFI_LOG_INFO("bssid=%s,ssid=%s,rssi=%d,phyrate=%d,noise=%d,Band=%s\n",stats->sta_BSSID,stats->sta_SSID,(int)stats->sta_RSSI,(int)stats->sta_PhyRate,(int)stats->sta_Noise,stats->sta_BAND);
+    char wifi_stats_buffer[128];
+    snprintf(wifi_stats_buffer, sizeof(wifi_stats_buffer), "bssid=%s,ssid=%s,rssi=%d,phyrate=%d,noise=%d,Band=%s",
+        stats->sta_BSSID, stats->sta_SSID, (int)stats->sta_RSSI, (int)stats->sta_PhyRate, (int)stats->sta_Noise, stats->sta_BAND);
+    WIFI_LOG_INFO("%s\n", wifi_stats_buffer);
+    telemetry_event_s("ap_info_split", wifi_stats_buffer);
 exit:
     pthread_mutex_unlock(&wpa_sup_lock);
     return;
