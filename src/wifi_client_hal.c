@@ -59,6 +59,7 @@ extern size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
 #define WPS_CON_TIMEOUT     120          /* WPS connection timeout */
 
 #define MAX_NEIGHBOR_LIMIT  32            /* Max number of APs in neighbor report */
+#define PREVIOUS_AUTH_INVALID 2           /* Previous authentication no longer valid reason code */
 #ifdef WIFI_CLIENT_ROAMING
 #define WIFI_ROAMING_CONFIG_FILE "/opt/secure/wifi/wifi_roamingControl.json"  /* Persistent storage for Roaming Configuration */
 #define WIFI_DEFAULT_ROAMING_ENABLE false
@@ -383,6 +384,7 @@ void* monitor_thread_task(void *param)
     char last_disconnected_bssid[ENET_LEN+1] = {0};
     int  last_disconnected_reason_code = 0;
     char last_disconnected_ssid[MAX_SSID_LEN+1] = {0};
+    char out_of_range_ssid[MAX_SSID_LEN+1] = {0};
 
     char tmp_return_buf[8192];
 
@@ -547,6 +549,13 @@ void* monitor_thread_task(void *param)
                     WIFI_LOG_INFO("Connected to BSSID [%s], SSID [%s]\n", current_bssid, current_ssid);
                     pthread_mutex_unlock(&wpa_sup_lock);
 
+                    /* Clear the out of range SSID as there is an user intervention */
+                    if(*out_of_range_ssid)
+                    {
+                        *out_of_range_ssid = 0;
+                        WIFI_LOG_INFO("Out of range SSID : %s\n", out_of_range_ssid);
+                    }
+
                     connError = WIFI_HAL_SUCCESS;
 
                     //pthread_mutex_lock(&wpa_sup_lock);
@@ -575,6 +584,15 @@ void* monitor_thread_task(void *param)
                             snprintf (last_disconnected_bssid, sizeof(last_disconnected_bssid), "%s", name_value_entry + strlen ("bssid="));
                         else if (0 == strncmp (name_value_entry, "reason=", strlen ("reason=")))
                             last_disconnected_reason_code = atoi (name_value_entry + strlen ("reason="));
+                    }
+
+                    // Clear the out of range SSID on receiving the WPA_EVENT_DISCONNECTED event only if the
+                    // disconnect is received from the router with reason code != PREVIOUS_AUTH_INVALID (i.e if reason_code!=2)
+                    // and if there was a router reboot (i.e if out_of_range_ssid is populated)
+                    if( *out_of_range_ssid && (last_disconnected_reason_code != PREVIOUS_AUTH_INVALID) )
+                    {
+                        *out_of_range_ssid = 0;
+                        WIFI_LOG_INFO("Out of range SSID : %s\n", out_of_range_ssid);
                     }
 
                     // if current_bssid = last_disconnected_bssid, assume last_disconnected_ssid = current_ssid; else reset last_disconnected_ssid
@@ -637,14 +655,34 @@ void* monitor_thread_task(void *param)
 
                         if (0 == strcmp (reason, "WRONG_KEY")) {
                             connError = WIFI_HAL_ERROR_INVALID_CREDENTIALS;
-                            WIFI_LOG_INFO( "Connection failed due to invalid credential, Disconnecting...\n");
-                            wpaCtrlSendCmd("DISCONNECT");
                         } else if (0 == strcmp (reason, "AUTH_FAILED"))
                             connError = WIFI_HAL_ERROR_AUTH_FAILED;
                     }
 
                     WIFI_LOG_INFO( "SSID [%s] disabled for %ds (auth_failures=%d), reason=%s, connError [%d]\n",
                             ssid, duration, auth_failures, reason, connError);
+
+                    /* If the user enters the wrong credentials and connect_withSSID() API is called,
+                     * then disconnect the device from the router */
+                    /* If router is rebooted, then do not send the DISCONNECT command to the wpa supplicant
+                     * and instead continue with the wpa_supplicant scan for SSID */
+                    if(connError == WIFI_HAL_ERROR_INVALID_CREDENTIALS)
+                    {
+                        if(strlen(out_of_range_ssid) > 0)
+                        {
+                            /* In case of router reboot, do not send the notification to the application
+                             * by calling the callback_connect() function and do not send DISCONNECT to wpa supplicant
+                             * out_of_range_ssid holds the SSID of the router that was rebooted/out of range */
+                            continue;
+                        }
+                        else
+                        {
+                            WIFI_LOG_INFO( "Connection failed due to invalid credential, Disconnecting...\n");
+                            pthread_mutex_lock(&wpa_sup_lock);
+                            wpaCtrlSendCmd("DISCONNECT");
+                            pthread_mutex_unlock(&wpa_sup_lock);
+                        }
+                    }
 
                     if (callback_connect)
                       (*callback_connect) (1, ssid, &connError);
@@ -712,6 +750,11 @@ void* monitor_thread_task(void *param)
                             }
                             else {
                                 WIFI_LOG_INFO("BSSID [%s] is down or not within range\n", last_disconnected_bssid);
+
+                                /*  We enter this condition if the router is out of range/rebooted.
+                                 *  If the router SSID is out of range, then set the out of range SSID */
+                                strcpy(out_of_range_ssid, last_disconnected_ssid);
+                                WIFI_LOG_INFO("Out of range SSID : %s\n", out_of_range_ssid);
                             }
                             pthread_mutex_unlock(&wpa_sup_lock);
                         }
@@ -793,6 +836,14 @@ void* monitor_thread_task(void *param)
               } else if(strstr(start,"WNM-BTM-RES-SENT") != NULL) {
                  WIFI_LOG_INFO("WNM- BTM Response Sent. \n");
                  cur_roaming_mode = WIFI_HAL_ROAMING_MODE_AP_STEERING;
+              } else if(strstr(start, WPA_EVENT_AUTH_REJECT) != NULL ||
+                        strstr(start, WPA_EVENT_ASSOC_REJECT) != NULL) {
+                 /* Clear the out of range SSID as there is an user intervention */
+                 if(*out_of_range_ssid)
+                 {
+                     *out_of_range_ssid = 0;
+                     WIFI_LOG_INFO("Out of range SSID : %s\n", out_of_range_ssid);
+                 }
               }
 #endif  // WIFI_CLIENT_ROAMING
                 else {
@@ -972,7 +1023,7 @@ INT wifi_setCliWpsEnrolleePin(INT ssidIndex, CHAR *wps_pin){
   }
   WIFI_LOG_INFO("Error connecting to device with enrollee pin... Check again\n");
   return RETURN_ERR;
-#endif 
+#endif
     return RETURN_OK;
 }
 
@@ -1287,7 +1338,7 @@ INT wifi_setCliWpsButtonPush(INT ssidIndex){
   connError = WIFI_HAL_CONNECTING;
   (*callback_connect)(1, "", &connError);
   WIFI_LOG_INFO("Connection in progress..\n");
-   
+
   WIFI_LOG_INFO("WIFI HAL: WPS Push sent successfully\n");
   return RETURN_OK;
 }
