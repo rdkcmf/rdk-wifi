@@ -233,7 +233,6 @@ void* wifi_event_monitor_thread(void *param)
                             wifi_hal_msg("The AP is down or not within range\n");
                             send_wpa_cli_command(result_buf, sizeof(result_buf)-1, "GET_NETWORK 0 ssid");
                             G_WIFI_MUTEX_UNLOCK(&g_wifi.sup_lock);
-                            if (callback_disconnect) (*callback_disconnect)(1, result_buf, &connStatus);
                         }
                         else{ /* Check whether the SSID has changed */
                             
@@ -242,9 +241,9 @@ void* wifi_event_monitor_thread(void *param)
                             /* Get the ssid info from the config file */
                             send_wpa_cli_command(result_buf, sizeof(result_buf)-1, "GET_NETWORK 0 ssid");
                             G_WIFI_MUTEX_UNLOCK(&g_wifi.sup_lock);
-                            if (callback_disconnect) (*callback_disconnect)(1, result_buf, &connStatus);
                         }
                     } /* else part for checking if BSS has bssid */ 
+		    if (callback_disconnect) (*callback_disconnect)(1, result_buf, &connStatus);
                 } /* WPA_EVENT_NETWORK_NOT_FOUND */ 
                 
                 else {
